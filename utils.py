@@ -22,7 +22,7 @@ def get_position(email: str) -> str:
 
 def send_email(email_address: str, username: str, code: str, one_click_link: str, req_id: str) -> bool:
     name = get_name(email_address)
-    with open("creds.json", 'r') as c: creds = load(c)
+    with open("creds.json", "r") as c: creds = load(c)
     with SMTP(creds["email"]["server"], creds["email"]["port"]) as mailServer:
         mailServer.starttls()
         mailServer.login(creds["email"]["email"], creds["email"]["password"])

@@ -31,24 +31,34 @@ except Exception as e:
     print("Failed to get data")
     exit()
 # Make sure db exists
-with open(f"{os.path.dirname(__file__)}/db.json", 'r') as c: db_creds = json.load(c)
-db = pymysql.connect(host=db_creds["host"], user=db_creds["user"], password=db_creds["password"],
-                     db=db_creds["db"])
+with open(f"{os.path.dirname(__file__)}/db.json", "r") as c: db_creds = json.load(c)
+db = pymysql.connect(
+    host=db_creds["host"],
+    user=db_creds["user"],
+    password=db_creds["password"],
+    db=db_creds["db"],
+)
 cursor = db.cursor()
 
 # Confirm data since last push
 cursor.execute("""CREATE TABLE IF NOT EXISTS covid (
-    time           TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
-    employees      INT                                   NOT NULL,
-    students       INT                                   NOT NULL,
-    total          INT                                   NOT NULL,
-    quarantine_dsu INT                                   NOT NULL,
-    quarantine     INT                                   NOT NULL);""")
+time           TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
+employees      INT                                   NOT NULL,
+students       INT                                   NOT NULL,
+total          INT                                   NOT NULL,
+quarantine_dsu INT                                   NOT NULL,
+quarantine     INT                                   NOT NULL);""")
 cursor.execute("""SELECT employees, students, total, quarantine_dsu, quarantine FROM discord.covid
 ORDER BY time DESC LIMIT 0;""")
 last_row = cursor.fetchone()
-if last_row is None or last_row[0] != dsu_data["employees"] or last_row[1] != dsu_data["students"] or last_row[2] != \
-        dsu_data["total"] or last_row[3] != dsu_data["quarantine_dsu"] or last_row[4] != dsu_data["quarantine"]:
+if (
+        last_row is None
+        or last_row[0] != dsu_data["employees"]
+        or last_row[1] != dsu_data["students"]
+        or last_row[2] != dsu_data["total"]
+        or last_row[3] != dsu_data["quarantine_dsu"]
+        or last_row[4] != dsu_data["quarantine"]
+):
     # Commit new data to db
     cursor.execute("""INSERT INTO discord.covid (employees, students, total, quarantine_dsu, quarantine)
 VALUES (%s, %s, %s, %s, %s)""", (
@@ -56,7 +66,8 @@ VALUES (%s, %s, %s, %s, %s)""", (
         dsu_data["students"],
         dsu_data["total"],
         dsu_data["quarantine_dsu"],
-        dsu_data["quarantine"]))
+        dsu_data["quarantine"]
+    ))
     db.commit()
 cursor.close()
 db.close()
@@ -172,11 +183,11 @@ old = {
             "inline": True
         }
     ],
-    "footer": {
-        "text": "Updated"
-    },
-    "timestamp": max(datetime.fromisoformat(world_data["govex"]),
-                     datetime.fromisoformat(world_data["CSSEGISandData"])).isoformat()
+    "footer": {"text": "Updated"},
+    "timestamp": max(
+        datetime.fromisoformat(world_data["govex"]),
+        datetime.fromisoformat(world_data["CSSEGISandData"])
+    ).isoformat()
 }
 message = {
     "embeds": [
@@ -198,13 +209,19 @@ All Time:      {u[deaths][all]:>{n1},} {w[deaths][all]:>{n2},}
 Vaccine Doses: {us:^{n1}}{world:^{n2}}
 Rolling Month: {u[vax][month]:>{n1},} {w[vax][month]:>{n2},}
 Rolling Year:  {u[vax][year]:>{n1},} {w[vax][year]:>{n2},}
-All Time:      {u[vax][all]:>{n1},} {w[vax][all]:>{n2},}```""".format(u=world_data["US"], w=world_data["world"], n1=12,
-                                                                      n2=14, us="US", world="World"),
-            "footer": {
-                "text": "Updated"
-            },
-            "timestamp": max(datetime.fromisoformat(world_data["govex"]),
-                             datetime.fromisoformat(world_data["CSSEGISandData"])).isoformat()
+All Time:      {u[vax][all]:>{n1},} {w[vax][all]:>{n2},}```""".format(
+                u=world_data["US"],
+                w=world_data["world"],
+                n1=12,
+                n2=14,
+                us="US",
+                world="World"
+            ),
+            "footer": {"text": "Updated"},
+            "timestamp": max(
+                datetime.fromisoformat(world_data["govex"]),
+                datetime.fromisoformat(world_data["CSSEGISandData"])
+            ).isoformat()
         },
         {
             "title": "DSU Covid Dashboard",
@@ -219,19 +236,21 @@ All Time:      {u[vax][all]:>{n1},} {w[vax][all]:>{n2},}```""".format(u=world_da
                 {
                     "name": dsu_data["total"],
                     "value": "{d[students]}\n{d[employees]}\n\n**{d[quarantine]}**\n{d[quarantine_dsu]}".format(
-                        d=dsu_data),
+                        d=dsu_data
+                    ),
                     "inline": True
                 }
             ],
-            "footer": {
-                "text": "Updated"
-            },
-            "timestamp": datetime.utcnow().isoformat()
+            "footer": {"text": "Updated"},
+            "timestamp": datetime.utcnow().isoformat(),
         }
     ]
 }
 
 UPDATE_MESSAGE = "880234208327516181"
-WEBHOOK = json.load(open(f'{os.path.dirname(__file__)}/creds.json'))['covid_webhook']
-resp = requests.patch(f"{WEBHOOK}/messages/{UPDATE_MESSAGE}?wait=true", data=json.dumps(message),
-                      headers={"Content-Type": "application/json"})
+WEBHOOK = json.load(open(f"{os.path.dirname(__file__)}/creds.json"))["covid_webhook"]
+resp = requests.patch(
+    f"{WEBHOOK}/messages/{UPDATE_MESSAGE}?wait=true",
+    data=json.dumps(message),
+    headers={"Content-Type": "application/json"}
+)
