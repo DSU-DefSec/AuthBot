@@ -38,8 +38,8 @@ async def on_ready():
     bot.loop.create_task(start_websocket())
     known_users = []
 
-    with open("db.json", "r") as c:
-        db_creds = load(c)
+    with open("creds.json", "r") as c:
+        db_creds = load(c)["db"]
     bot.db = pymysql.connect(
         host=db_creds["host"],
         user=db_creds["user"],
@@ -99,7 +99,7 @@ async def verification_message(message: discord.Message):
 
         if bot.cursor.execute(
                 "SELECT TIME FROM verify WHERE email = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 10 MINUTE)) AND NOW() ORDER BY TIME DESC LIMIT 1",
-                email_address) == 0:
+                email_address) != -1:
             code = str(int(random() * 999999 + 1000000))[1:]
             big_code = "".join(rand_choice(ascii_letters + digits) for _ in range(16))
             req_id = "".join(rand_choice(ascii_letters + digits) for _ in range(5))

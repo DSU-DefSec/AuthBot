@@ -1,0 +1,15 @@
+{
+  "token": "",
+  "email": {
+    "email": "",
+    "password": "",
+    "server": "smtp.gmail.com",
+    "port": 587
+  },
+  "db": {
+    "host": "localhost",
+    "user": "",
+    "password": "",
+    "db": "discord"
+  }
+}
