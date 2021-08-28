@@ -1,4 +1,5 @@
 #!/usr/bin/python
+import json
 from json import load
 from random import random, choice as rand_choice
 from re import compile as re_compile
@@ -10,70 +11,56 @@ import pymysql
 from datetime import datetime
 from discord.ext import commands
 from discord.iterators import MemberIterator
-from typing import Union
 
 from utils import get_name, get_position, send_email
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
+bot.cursor = None
+bot.db = None
+bot.config = None
+bot.auth_channels = None
+EMAIL_RE = re_compile(r'\w{0,23}\.\w{0,23}@(trojans\.|pluto\.)?dsu\.edu')
+CODE_RE = re_compile(r'\d{6}')
 
 
-async def db_login():
-    with open("db.json", 'r') as c: db_creds = load(c)
-    db = pymysql.connect(host=db_creds["host"], user=db_creds["user"], password=db_creds["password"],
-                         db=db_creds["db"])
-    return db, db.cursor()
+def reload_config():
+    bot.config = json.load(open("config.json"))["servers"]
+    bot.auth_channels = [str(bot.config[server].get("verify_channel", "")) for server in bot.config]
+    print("Loaded server config")
 
 
-async def db_save_close(db, cursor):
-    if cursor is not None:
-        cursor.close()
-    if db is not None:
-        db.commit()
-        db.close()
-
-
-async def init_db():
-    db = None
-    cursor = None
-    try:
-        db, cursor = await db_login()
-        cursor.execute("SELECT VERSION()")
-        data = cursor.fetchone()
-        print(f"MySQL Version: {data[0]}")
-        cursor.execute("""CREATE TABLE IF NOT EXISTS users (
-        id         BIGINT(18)                                                 NOT NULL
-            PRIMARY KEY,
-        discordTag VARCHAR(64)                                                NOT NULL,
-        email      VARCHAR(64)                                                NULL,
-        NAME       VARCHAR(64)                                                NULL,
-        POSITION   ENUM ('non-dsu', 'student', 'professor') DEFAULT 'non-dsu' NOT NULL,
-        CONSTRAINT email
-            UNIQUE (email));""")
-        cursor.execute("""CREATE TABLE IF NOT EXISTS verify (
-    email VARCHAR(50) NOT NULL,
-    userid BIGINT(18) NOT NULL,
-    code INT(6) NOT NULL,
-    bigcode CHAR(16) NOT NULL,
-    TIME TIMESTAMP NOT NULL,
-    CONSTRAINT verify_users_id_fk FOREIGN KEY (userid) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE)""")
-        # cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS users_email_uindex ON users (email)""")
-    except Exception as e:
-        print(e)
-        print("Error! Could not login to db")
-        exit()
-    finally:
-        await db_save_close(db, cursor)
+reload_config()
 
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    await init_db()
     bot.loop.create_task(start_websocket())
-    # guild: discord.Guild = await bot.fetch_guild(757997063689470022)
-    guilds = bot.guilds
     known_users = []
-    for guild in guilds:
+
+    with open("db.json", 'r') as c:
+        db_creds = load(c)
+    bot.db = pymysql.connect(host=db_creds["host"], user=db_creds["user"], password=db_creds["password"],
+                             db=db_creds["db"], autocommit=True)
+    bot.cursor = bot.db.cursor()
+    bot.cursor.execute("""CREATE TABLE IF NOT EXISTS users (
+    id           BIGINT(20)                                                                  NOT NULL PRIMARY KEY,
+    discordTag   VARCHAR(40)                                                                 NOT NULL,
+    email        VARCHAR(64)                                                                 NULL,
+    NAME         VARCHAR(64)                                                                 NULL,
+    POSITION     ENUM ('non-dsu', 'student', 'professor', 'unverified') DEFAULT 'unverified' NOT NULL,
+    verifyDate   TIMESTAMP                                                                   NULL,
+    verifyServer BIGINT(20)                                                                  NULL,
+    CONSTRAINT email UNIQUE (email));""")
+    bot.cursor.execute("""CREATE TABLE IF NOT EXISTS verify (
+    email   VARCHAR(64)                           NOT NULL,
+    userid  BIGINT                                NOT NULL,
+    code    INT(6)                                NOT NULL,
+    bigcode CHAR(16)                              NOT NULL,
+    TIME    TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL ON UPDATE CURRENT_TIMESTAMP(),
+    CONSTRAINT userid FOREIGN KEY (userid) REFERENCES discord.users (id) ON UPDATE CASCADE ON DELETE CASCADE);""")
+
+    for guild in bot.guilds:
         print(guild)
         members: MemberIterator = guild.fetch_members(limit=None)
         try:
@@ -81,9 +68,10 @@ async def on_ready():
                 member = await members.next()
                 if member.id not in known_users:
                     known_users.append(member.id)
-                    await add_user_to_db(member)
+                    add_user_to_db(member)
         except discord.errors.NoMoreItems:
             pass
+    bot.db.commit()
     print(f"Users: {len(known_users)}")
 
 
@@ -92,83 +80,95 @@ async def verification_message(message: discord.Message):
     :param message:
     :return:
     """
-    message.channel.typing()
-    await add_user_to_db(message.author)
 
-    email_re = re_compile(r'\w+\.\w+@(trojans\.|pluto\.)?dsu\.edu')
-    code_re = re_compile(r'\d{6}')
+    add_user_to_db(message.author)
 
-    channel: discord.TextChannel = message.channel
     author: discord.Member = message.author
-    message_response = None
-    message_react = None
+    message_content = message.content.strip()
 
-    email_address = email_re.search(message.content)
-    email_address = email_address.group(0) if email_address else None
+    email_address = addr.group() if (addr := EMAIL_RE.search(message_content)) else None
+    verification_code = code.group() if (code := CODE_RE.search(message_content)) else None
 
-    verification_code = code_re.search(message.content)
-    verification_code = verification_code.group(0) if verification_code else None
+    if email_address:  # User sent an email address
+        print(f"Request to verify {email_address} in {message.guild}")
 
-    if email_address:  # User sent an email
-        print(f"Request to verify {email_address}")
-        db, cursor = await db_login()
-        cursor.execute(
-            "SELECT TIME FROM verify WHERE email = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 10 MINUTE)) AND NOW() ORDER BY TIME DESC LIMIT 1",
-            email_address)
-        if cursor.rowcount == 0:
+        if bot.cursor.execute(
+                "SELECT TIME FROM verify WHERE email = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 10 MINUTE)) AND NOW() ORDER BY TIME DESC LIMIT 1",
+                email_address) == 0:
             code = str(int(random() * 999999 + 1000000))[1:]
             big_code = ''.join(rand_choice(ascii_letters + digits) for _ in range(16))
             req_id = ''.join(rand_choice(ascii_letters + digits) for _ in range(5))
-            cursor.execute("INSERT INTO verify (email, userid, code, bigcode) VALUES (%s, %s, %s, %s)",
-                           (email_address, author.id, code, big_code))
+
+            bot.cursor.execute("INSERT INTO verify (email, userid, code, bigcode) VALUES (%s, %s, %s, %s)",
+                               (email_address, author.id, code, big_code))
             big_code = f"https://api.mxsmp.com/dsu/verify.php?user={author.id}&code={big_code}"
-            await send_email(email_address, str(author), code, big_code, req_id)
+            try:
+                send_email(email_address, str(author), code, big_code, req_id)
+            except Exception as e:
+                print(f"Exception with email {e}")
+                await message.reply(
+                    f"Error sending email to {email_address} ({message.author}). (<@230084329223487489>)")
+                await message.delete(delay=5)
+                return
             message_react = "📧"
-            message_response = f"Check your email for an email from DSU Auth Bot (matrixcraft.us@gmail.com)! ID: {req_id}\nCode valid for the next 30 minutes"
+            message_response = f"Check your email for an email from DefSec Auth Bot (dsudefsec@gmail.com)! ID: {req_id}\nCode valid for the next 30 minutes"
         else:
             message_react = "⚠"
             message_response = "Email sent too recently! Wait a few minutes before requesting another verification code."
-        await db_save_close(db, cursor)
+
     elif verification_code:
-        print(f"Request to verify {verification_code}")
-        db, cursor = await db_login()
-        cursor.execute(
-            "SELECT code,email FROM verify WHERE userid = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW()",
-            author.id)
-        for r in cursor.fetchall():
-            if r[0] == int(verification_code):
-                try:
-                    await verify_member(author, r[1])
-                except:
-                    pass
-                await message.add_reaction("✅")
-                break
+        print(f"Request to verify {verification_code} in {message.guild}")
+        if bot.cursor.execute(
+                "SELECT code,email FROM verify WHERE userid = %s AND code = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW()",
+                (author.id, int(verification_code))) > 0:
+            r = bot.cursor.fetchone()
+            message_react = "✅"
+            message_response = f"Verified to {r[1]}!\nCheck out some of the other channels <#757997403570831503>"
+            await (await message.reply(message_response)).delete(delay=5)
+            await verify_member(author.id, r[1])
+
         else:
             message_react = "❌"
             message_response = "Expired or invalid code"
-        await db_save_close(db, cursor)
     else:
         print(f"Could not verify: {message.content}")
         message_react = "❌"
         message_response = "Bad email format!"
     if message_react: await message.add_reaction(message_react)
-    await message.delete(delay=10)
-    if message_response: await (await channel.send(message_response)).delete(delay=15)
+    await message.delete(delay=20)
+    if message_response: await (await message.reply(message_response)).delete(delay=20)
 
 
-async def add_user_to_db(user: Union[discord.User, discord.Member]):
-    db, cursor = await db_login()
-    username = str(user)
-    cursor.execute(
+def add_user_to_db(member: discord.Member):
+    username = str(member)
+    bot.cursor.execute(
         "INSERT INTO discord.users (id, discordTag) VALUES (%s, %s) ON DUPLICATE KEY UPDATE discordTag = %s;",
-        (user.id, username, username))
-    await db_save_close(db, cursor)
+        (member.id, username, username))
+
+
+async def confirm_roles(member: discord.Member):
+    bot.cursor.execute("SELECT email,name,position FROM discord.users WHERE id = %s", member.id)
+    user_info = bot.cursor.fetchone()
+    if not user_info: return
+    if user_info[1]:
+        try:
+            await member.edit(nick=user_info[1], reason=f"Verified to {user_info[1]} ({user_info[0]})")
+        except discord.errors.Forbidden:
+            pass
+    try:
+        await member.add_roles(member.guild.get_role(int(bot.config[str(member.guild.id)][f"{user_info[2]}_role"])),
+                               reason=f"Verified to {user_info[1]} ({user_info[0]})")
+    except (KeyError, TypeError, discord.errors.Forbidden):
+        pass
 
 
 @bot.event
 async def on_member_join(member: discord.Member):
     print(f"+{member} in {member.guild}")
-    await add_user_to_db(member)
+    bot.db.ping()
+    add_user_to_db(member)
+    bot.db.commit()
+    await confirm_roles(member)
 
 
 async def start_websocket():
@@ -185,55 +185,78 @@ async def handle_socket_connection(reader: asyncio.StreamReader, writer: asyncio
     writer.close()
     print(f"Received {message!r} from {addr}")
     message = message.split(':')
-    if len(message) != 2:
+    if len(message) != 3:
         print("Invalid data recieved")
         return
     uid = int(message[0])
     email = message[1]
-    member: discord.Member = await bot.get_guild(757997063689470022).fetch_member(uid)
-    await verify_member(member, email)
-
-
-async def verify_member(member: discord.Member, email: str):
-    if email == "?":
-        print(f"ERROR verifying {member}")
+    bot.db.ping()
+    bot.cursor.execute(
+        "SELECT email FROM verify WHERE bigcode = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW()",
+        message[2])
+    if bot.cursor.fetchone()[0] != email:
+        print("Code does not match")
         return
-    db, cursor = await db_login()
-    username = str(member)
+    await verify_member(uid, email)
+
+
+async def verify_member(uid: int, email: str):
+    if email == "?":
+        print(f"ERROR verifying {uid}")
+        return
+    username = str(bot.get_user(uid))
     name = get_name(email)
     position = get_position(email)
-    cursor.execute("REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)",
-                   (member.id, username, email, name, position))
-    await db_save_close(db, cursor)
-    await bot.get_channel(763544606369382403).send(
-        f"{position.capitalize()} {name} email {email} linked {member.mention}")
-    await member.add_roles(member.guild.get_role(758029400728928378), reason=f"Verified to {name} ({email})")
-    try:
-        await member.edit(nick=get_name(email), reason=f"Verified to {name} {email}")
-    except discord.errors.Forbidden as e:
-        print(e)
-        pass
+    # Replacing the id kills the fk to verify thus deleting the pending verifications
+    bot.cursor.execute("REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)",
+                       (uid, username, email, name, position))
     with open("verify.log", "a") as log:
-        log.write(f"{datetime.now()} {member} ({member.id}) => {email}\n")
-    print(f"Verified {member} ({member.id}) to {email}")
+        log.write(f"{datetime.now()} {bot.get_user(uid)} ({uid}) => {email}\n")
+    print(f"Verified {bot.get_user(uid)} ({uid}) to {email}")
+    for server in bot.config:
+        try:
+            member = bot.get_guild(int(server)).get_member(uid)
+            await confirm_roles(member)
+            await bot.get_channel(int(bot.config[server]["verify_log"])).send(
+                f"{position.capitalize()} {name} email {email} linked {member.mention}")
+        except (ValueError, AttributeError):
+            pass
+
+
+@bot.command(name="config")
+@commands.has_permissions(administrator=True)
+async def config(ctx):
+    await ctx.send(embed=discord.Embed(title="Config for this server", description=f"""
+Verify channel: <#{bot.config[str(ctx.guild.id)]["verify_channel"]}>
+Verify log: <#{bot.config[str(ctx.guild.id)]["verify_log"]}>
+Student Role: <@&{bot.config[str(ctx.guild.id)]["student_role"]}>
+Professor Role: <@&{bot.config[str(ctx.guild.id)]["instructor_role"]}>
+"""))
+
+
+@bot.command(name="reloadconfig")
+@commands.has_permissions(administrator=True)
+async def reload(ctx):
+    await ctx.message.delete(delay=2)
+    reload_config()
 
 
 @bot.event
 async def on_message(message: discord.Message):
-    # print(f"{message.channel} {message.author} >> {message.content}")
-
-    await bot.process_commands(message)
     if message.author == bot.user:
         return
-    if message.channel.id == 758030075328463081:
-        await verification_message(message)
+    await bot.process_commands(message)
+    if str(message.channel.id) in bot.auth_channels:
+        with message.channel.typing():
+            bot.db.ping()
+            await verification_message(message)
+
+    # @bot.command(pass_context=True)
+    # @commands.has_permissions(administrator=True)
+    # async def acommand(ctx, argument):
+    #     await ctx.say(f"Hi {argument}")
 
 
-# @bot.command(pass_context=True)
-# @commands.has_permissions(administrator=True)
-# async def acommand(ctx, argument):
-#     await ctx.say(f"Hi {argument}")
-
-
-with open("creds.json", 'r') as c: creds = load(c)
+with open("creds.json", 'r') as c:
+    creds = load(c)
 bot.run(creds["token"])

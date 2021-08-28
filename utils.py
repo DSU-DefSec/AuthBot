@@ -8,10 +8,6 @@ def get_name(email: str) -> str:
     return f"{email.split('.')[0].capitalize()} {email.split('@')[0].split('.')[1].capitalize()}"
 
 
-# def get_username(user: discord.User) -> str:
-#     return f"{user.name}#{str(user.discriminator).rjust(4, '0')}"
-
-
 def get_position(email: str) -> str:
     if "@trojans.dsu.edu" in email.lower() or "@pluto.dsu.edu" in email.lower():
         return "student"
@@ -20,7 +16,11 @@ def get_position(email: str) -> str:
     return "non-dsu"
 
 
-async def send_email(email_address: str, username: str, code: str, one_click_link: str, req_id: str) -> bool:
+# def get_username(user: discord.User) -> str:
+#     return f"{user.name}#{str(user.discriminator).rjust(4, '0')}"
+
+
+def send_email(email_address: str, username: str, code: str, one_click_link: str, req_id: str) -> bool:
     name = get_name(email_address)
     with open("creds.json", 'r') as c: creds = load(c)
     with SMTP(creds["email"]["server"], creds["email"]["port"]) as mailServer:
