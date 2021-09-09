@@ -20,7 +20,7 @@ def get_position(email: str) -> str:
 #     return f"{user.name}#{str(user.discriminator).rjust(4, '0')}"
 
 
-def send_email(email_address: str, username: str, code: str, one_click_link: str, req_id: str) -> bool:
+def send_email(email_address: str, username: str, code: str, one_click_link: str) -> bool:
     name = get_name(email_address)
     with open("creds.json", "r") as c: creds = load(c)
     with SMTP(creds["email"]["server"], creds["email"]["port"]) as mailServer:
@@ -50,8 +50,7 @@ def send_email(email_address: str, username: str, code: str, one_click_link: str
             Questions? Message an @Moderator
 
             Thank you and have a great day!
-            Didn't request this email? You are safe to delete it!
-            Auth request ID: {req_id}""", "plain"))
+            Didn't request this email? You are safe to delete it!""", "plain"))
         email.attach(MIMEText(f"""<html><body>
             <h2>Welcome to the DSU Discord Server!</h2>
             <p>Verifying will link you to <span style="background-color:#AFEEEE;">@{username}</span>&nbsp;and allow you to talk in voice/text channels.</p>
@@ -72,7 +71,6 @@ def send_email(email_address: str, username: str, code: str, one_click_link: str
             <p>Questions? Message an @Moderator</p>
             <p>Thank you and have a great day!</p>
             <p>Didn&#39;t request this email? You are safe to delete it!</p>
-            <p>Auth request ID: {req_id}</p>
             </body></html>""", "html"))
         mailServer.sendmail(creds["email"]["email"], email_address, email.as_string())
     return True

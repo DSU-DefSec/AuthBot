@@ -1,16 +1,15 @@
 #!/usr/bin/python
-import json
-from json import load
-from random import random, choice as rand_choice
-from re import compile as re_compile
-from string import ascii_letters, digits
-
 import asyncio
 import discord
+import json
 import pymysql
 from datetime import datetime
 from discord.ext import commands
 from discord.iterators import MemberIterator
+from json import load
+from random import random, choice as rand_choice
+from re import compile as re_compile
+from string import ascii_letters, digits
 
 from utils import get_name, get_position, send_email
 
@@ -98,11 +97,11 @@ async def verification_message(message: discord.Message):
         print(f"Request to verify {email_address} in {message.guild}")
 
         if bot.cursor.execute(
-                "SELECT TIME FROM verify WHERE email = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 10 MINUTE)) AND NOW() ORDER BY TIME DESC LIMIT 1",
+                "SELECT TIME FROM verify WHERE email = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 5 MINUTE)) AND NOW() ORDER BY TIME DESC LIMIT 1",
                 email_address) != -1:
             code = str(int(random() * 999999 + 1000000))[1:]
             big_code = "".join(rand_choice(ascii_letters + digits) for _ in range(16))
-            req_id = "".join(rand_choice(ascii_letters + digits) for _ in range(5))
+            # req_id = "".join(rand_choice(ascii_letters + digits) for _ in range(5))
 
             bot.cursor.execute(
                 "INSERT INTO verify (email, userid, code, bigcode) VALUES (%s, %s, %s, %s)",
@@ -110,7 +109,7 @@ async def verification_message(message: discord.Message):
             )
             big_code = f"https://api.mxsmp.com/dsu/verify.php?user={author.id}&code={big_code}"
             try:
-                send_email(email_address, str(author), code, big_code, req_id)
+                send_email(email_address, str(author), code, big_code)
             except Exception as e:
                 print(f"Exception with email {e}")
                 await message.reply(
@@ -119,7 +118,7 @@ async def verification_message(message: discord.Message):
                 await message.delete(delay=5)
                 return
             message_react = "📧"
-            message_response = f"Check your email for an email from DefSec Auth Bot (dsudefsec@gmail.com)! ID: {req_id}\nCode valid for the next 30 minutes"
+            message_response = f"Check your DSU email for a message from DefSec Auth Bot (dsudefsec@gmail.com)!\nVerification code valid for the next hour"
         else:
             message_react = "⚠"
             message_response = "Email sent too recently! Wait a few minutes before requesting another verification code."
@@ -127,7 +126,7 @@ async def verification_message(message: discord.Message):
     elif verification_code:
         print(f"Request to verify {verification_code} in {message.guild}")
         if bot.cursor.execute(
-                "SELECT code,email FROM verify WHERE userid = %s AND code = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW()",
+                "SELECT code,email FROM verify WHERE userid = %s AND code = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 60 MINUTE)) AND NOW()",
                 (author.id, int(verification_code))) > 0:
             r = bot.cursor.fetchone()
             message_react = "✅"
@@ -203,7 +202,7 @@ async def handle_socket_connection(reader: asyncio.StreamReader, writer: asyncio
     email = message[1]
     bot.db.ping()
     bot.cursor.execute(
-        "SELECT email FROM verify WHERE bigcode = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW()",
+        "SELECT email FROM verify WHERE bigcode = %s AND TIME BETWEEN (DATE_SUB(NOW(), INTERVAL 60 MINUTE)) AND NOW()",
         message[2]
     )
     if bot.cursor.fetchone()[0] != email:
