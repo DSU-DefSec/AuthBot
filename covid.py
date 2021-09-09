@@ -1,10 +1,9 @@
 import json
 import os
-from csv import reader as csv_reader
-
 import pymysql
 import requests
 from bs4 import BeautifulSoup
+from csv import reader as csv_reader
 from datetime import datetime
 
 # Get DSU covid data
@@ -31,7 +30,7 @@ except Exception as e:
     print("Failed to get data")
     exit()
 # Make sure db exists
-with open(f"{os.path.dirname(__file__)}/db.json", "r") as c: db_creds = json.load(c)
+with open(f"{os.path.dirname(__file__)}/creds.json", "r") as c: db_creds = json.load(c)
 db = pymysql.connect(
     host=db_creds["host"],
     user=db_creds["user"],
