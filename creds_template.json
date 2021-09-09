@@ -11,5 +11,7 @@
     "user": "",
     "password": "",
     "db": "discord"
-  }
+  },
+  "sodexno_webhook": "https://discord.com/api/webhooks/##################/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "covid_webhook": "https://discord.com/api/webhooks/##################/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 }
