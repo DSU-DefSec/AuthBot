@@ -76,24 +76,35 @@ def send_email(email_address: str, username: str, code: str, one_click_link: str
 .hover-bg-indigo-700:hover {
   background-color: #4338ca !important;
 }
+@media (max-width: 600px) {
+  .sm-px-4 {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+  .sm-text-3xl {
+    font-size: 30px !important;
+  }
+}
 </style>
-</head>
+</head>""" + f"""
 <body style="margin: 0; width: 100%; padding: 0; word-break: break-word; -webkit-font-smoothing: antialiased; background-color: #ffffff;">
     <div style="display: none;">Welcome to the DSU Discord Server! Please verify your account!&#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &zwnj;
       &#160;&#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &zwnj;
       &#160;&#847; &#847; &#847; &#847; &#847; </div>
   <div role="article" aria-roledescription="email" aria-label="Verify your Discord Account!" lang="en">
-    <div style="margin-left: auto; margin-right: auto; max-width: 820px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;">
-      <div style="margin-left: auto; margin-right: auto; background-color: #f3f4f6; padding: 48px;">
-        <h1 style="text-align: center; font-size: 48px; font-weight: 700;">Welcome to the DSU Discord&nbsp;Server!</h1>
-        <div style="text-align: center;">
-          <a class="hover-bg-indigo-700" href="#" style="display: inline-block; border-radius: 4px; background-color: #3730a3; padding-top: 16px; padding-bottom: 16px; padding-left: 24px; padding-right: 24px; text-align: center; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none;">Click to verify</a>
-          <div style="margin-top: 12px;">or send <span style="font-weight: 700;">1234</span> in #please-verify</div>
-        </div>
-        <ul style="list-style-position: inside; list-style-type: disc;">
+    <div style="margin-left: auto; margin-right: auto; max-width: 870px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;">
+      <div class="sm-px-4" style="margin-left: auto; margin-right: auto; background-color: #f3f4f6; padding-top: 48px; padding-bottom: 48px; padding-left: 40px; padding-right: 40px; text-align: center;">
+        <h1 class="sm-text-3xl" style="font-size: 48px; font-weight: 700;">Welcome to the DSU Discord&nbsp;Server!</h1>
+        <a href="{one_click_link}" class="hover-bg-indigo-700" style="display: inline-block; border-radius: 4px; background-color: #3730a3; padding-top: 16px; padding-bottom: 16px; padding-left: 24px; padding-right: 24px; font-weight: 600; line-height: 1; color: #ffffff; text-decoration: none;">
+          <!--[if mso]><i style="letter-spacing: 27px; mso-font-width: -100%; mso-text-raise: 26pt;">&nbsp;</i><![endif]-->
+          <span style="mso-text-raise: 13pt;">Click to verify</span>
+          <!--[if mso]><i style="letter-spacing: 27px; mso-font-width: -100%;">&nbsp;</i><![endif]-->
+        </a>
+        <div style="margin-top: 12px;">or send <span style="font-weight: 700;">{code}</span> in #please-verify</div>
+        <ul style="list-style-position: inside; list-style-type: disc; text-align: left;">
           <li>You will be able to talk in our server</li>
-          <li>This will link you to <code style="border-radius: 6px; background-color: #e5e7eb; padding: 0.25rem;">@Username#1234</code></li>
-          <li>Your nickname will be set to <b>Gaelin Shupe</b>. <i>Contact a moderator to change it.</i></li>
+          <li>This will link you to <code style="border-radius: 6px; background-color: #e5e7eb; padding: 0.25rem;">@{username}</code></li>
+          <li>Your nickname will be set to <b>{name}</b>. <i>Contact a moderator to change it.</i></li>
           <li>You agree to the Server Rules</li>
         </ul>
       </div>
@@ -113,7 +124,7 @@ def send_email(email_address: str, username: str, code: str, one_click_link: str
         <div>Don't know how to use discord? Check out <a href="#" style="text-decoration: underline;">this tutorial</a>!</div>
         <div style="margin-top: 8px;">Questions? Comments? Concerns? Contact a @Moderator</div>
         <div style="margin-top: 8px;">Didn't request this email? Feel free to delete it!</div>
-        <div style="margin-top: 8px; color: #6b7280;">Auth request ID: <span style="font-weight: 700;">1439985</span></div>
+        <div style="margin-top: 8px; color: #6b7280;">Auth request ID: <span style="font-weight: 700;">{code}</span></div>
       </div>
     </div>
   </div>
