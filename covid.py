@@ -1,10 +1,11 @@
 import json
 import os
+from csv import reader as csv_reader
+from datetime import datetime
+
 import pymysql
 import requests
 from bs4 import BeautifulSoup
-from csv import reader as csv_reader
-from datetime import datetime
 
 # Get DSU covid data
 dsu_data = {}
@@ -14,15 +15,15 @@ try:
         if len(cells) != 2: continue
         key = cells[0].text.strip(" \n")
 
-        if key == "CURRENT ACTIVE CASES - EMPLOYEES ONLY":
+        if "CURRENT ACTIVE CASES - EMPLOYEES ONLY" in key.upper():
             key = "employees"
-        elif key == "CURRENT ACTIVE CASES - STUDENTS ONLY":
+        elif "CURRENT ACTIVE CASES - STUDENTS ONLY" in key.upper():
             key = "students"
-        elif key == "CURRENT ACTIVE CASES - EMPLOYEES AND STUDENTS":
+        elif "CURRENT ACTIVE CASES - EMPLOYEES AND STUDENTS" in key.upper():
             key = "total"
-        elif key == "CURRENT QUARANTINE/ISOLATION IN CAMPUS FACILITIES - EMPLOYEES AND STUDENTS":
+        elif "CURRENT QUARANTINE/ISOLATION IN CAMPUS FACILITIES - EMPLOYEES AND STUDENTS" in key.upper():
             key = "quarantine_dsu"
-        elif key == "CURRENT QUARANTINE/ISOLATION - EMPLOYEES AND STUDENTS (INCLUDING HOME QUARANTINE)":
+        elif "CURRENT QUARANTINE/ISOLATION - EMPLOYEES AND STUDENTS (INCLUDING HOME QUARANTINE)" in key.upper():
             key = "quarantine"
         dsu_data[key] = cells[1].text
 except Exception as e:
@@ -30,7 +31,7 @@ except Exception as e:
     print("Failed to get data")
     exit()
 # Make sure db exists
-with open(f"{os.path.dirname(__file__)}/creds.json", "r") as c: db_creds = json.load(c)
+with open(f"{os.path.dirname(__file__)}/creds.json", "r") as c: db_creds = json.load(c)["db"]
 db = pymysql.connect(
     host=db_creds["host"],
     user=db_creds["user"],
@@ -54,18 +55,17 @@ if (
         last_row is None
         or last_row[0] != dsu_data["employees"]
         or last_row[1] != dsu_data["students"]
-        or last_row[2] != dsu_data["total"]
-        or last_row[3] != dsu_data["quarantine_dsu"]
-        or last_row[4] != dsu_data["quarantine"]
+        # or last_row[2] != dsu_data["total"]
+        # or last_row[3] != dsu_data["quarantine_dsu"]
+        # or last_row[4] != dsu_data["quarantine"]
 ):
     # Commit new data to db
-    cursor.execute("""INSERT INTO discord.covid (employees, students, total, quarantine_dsu, quarantine)
-VALUES (%s, %s, %s, %s, %s)""", (
+    cursor.execute("""INSERT INTO discord.covid (employees, students) VALUES (%s, %s)""", (
         dsu_data["employees"],
         dsu_data["students"],
-        dsu_data["total"],
-        dsu_data["quarantine_dsu"],
-        dsu_data["quarantine"]
+        # dsu_data["total"],
+        # dsu_data["quarantine_dsu"],
+        # dsu_data["quarantine"]
     ))
     db.commit()
 cursor.close()
@@ -233,8 +233,8 @@ All Time:      {u[vax][all]:>{n1},} {w[vax][all]:>{n2},}```""".format(
                     "inline": True
                 },
                 {
-                    "name": dsu_data["total"],
-                    "value": "{d[students]}\n{d[employees]}\n\n**{d[quarantine]}**\n{d[quarantine_dsu]}".format(
+                    "name": int(dsu_data["students"]) + int(dsu_data["employees"]),
+                    "value": "{d[students]}\n{d[employees]}".format(
                         d=dsu_data
                     ),
                     "inline": True
