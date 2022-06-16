@@ -1,15 +1,16 @@
 #!/usr/bin/python
 import asyncio
-import discord
 import json
-import pymysql
 from datetime import datetime
-from discord.ext import commands
-from discord.iterators import MemberIterator
 from json import load
 from random import random, choice as rand_choice
 from re import compile as re_compile
 from string import ascii_letters, digits
+
+import discord
+import pymysql
+from discord.ext import commands
+from discord.iterators import MemberIterator
 
 from utils import get_name, get_position, send_email
 
@@ -84,7 +85,8 @@ async def verification_message(message: discord.Message):
     :param message:
     :return:
     """
-
+    if message.author.id == 230084329223487489:
+        return
     add_user_to_db(message.author)
 
     author: discord.Member = message.author
@@ -107,7 +109,7 @@ async def verification_message(message: discord.Message):
                 "INSERT INTO verify (email, userid, code, bigcode) VALUES (%s, %s, %s, %s)",
                 (email_address, author.id, code, big_code)
             )
-            big_code = f"https://api.mxsmp.com/dsu/verify.php?user={author.id}&code={big_code}"
+            big_code = f"https://dsu.gael.in/verify.php?user={author.id}&code={big_code}"
             try:
                 send_email(email_address, str(author), code, big_code)
             except Exception as e:
@@ -115,10 +117,10 @@ async def verification_message(message: discord.Message):
                 await message.reply(
                     f"Error sending email to {email_address} ({message.author}). (<@230084329223487489>)"
                 )
-                await message.delete(delay=5)
+                await message.delete(delay=10)
                 return
             message_react = "📧"
-            message_response = f"Check your DSU email for a message from DefSec Auth Bot (dsudefsec@gmail.com)!\nVerification code valid for the next hour"
+            message_response = f"Check your email (and spam folder) for a message from DSU Auth Bot!\nVerification code valid for the next hour"
         else:
             message_react = "⚠"
             message_response = "Email sent too recently! Wait a few minutes before requesting another verification code."
@@ -131,7 +133,7 @@ async def verification_message(message: discord.Message):
             r = bot.cursor.fetchone()
             message_react = "✅"
             message_response = f"Verified to {r[1]}!\nCheck out some of the other channels <#757997403570831503>"
-            await (await message.reply(message_response)).delete(delay=5)
+            # await (await message.reply(message_response)).delete(delay=10)
             await verify_member(author.id, r[1])
 
         else:
@@ -142,8 +144,8 @@ async def verification_message(message: discord.Message):
         message_react = "❌"
         message_response = "Bad email format!"
     if message_react: await message.add_reaction(message_react)
-    await message.delete(delay=20)
-    if message_response: await (await message.reply(message_response)).delete(delay=20)
+    await message.delete(delay=25)
+    if message_response: await (await message.reply(message_response)).delete(delay=25)
 
 
 def add_user_to_db(member: discord.Member):
@@ -164,10 +166,20 @@ async def confirm_roles(member: discord.Member):
         except discord.errors.Forbidden:
             pass
     try:
-        await member.add_roles(
-            member.guild.get_role(int(bot.config[str(member.guild.id)][f"{user_info[2]}_role"])),
-            reason=f"Verified to {user_info[1]} ({user_info[0]})"
-        )
+        if user_info[2] == "professor":
+            await member.add_roles(
+                member.guild.get_role(int(bot.config[str(member.guild.id)][f"instructor_role"])),
+                reason=f"Verified to {user_info[1]} ({user_info[0]})"
+            )
+            await member.add_roles(
+                member.guild.get_role(int(bot.config[str(member.guild.id)][f"student_role"])),
+                reason=f"Verified to {user_info[1]} ({user_info[0]})"
+            )
+        if user_info[2] == "student":
+            await member.add_roles(
+                member.guild.get_role(int(bot.config[str(member.guild.id)][f"student_role"])),
+                reason=f"Verified to {user_info[1]} ({user_info[0]})"
+            )
     except (KeyError, TypeError, discord.errors.Forbidden):
         pass
 
