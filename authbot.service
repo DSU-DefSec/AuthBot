@@ -1,0 +1,19 @@
+# /etc/systemd/system/authbot.service
+[Unit]
+
+Description=Defsec Auth Bot
+Requires=network-online.target
+After=network-online.target
+
+
+[Service]
+
+WorkingDirectory=/path/to/authbot
+User=authbot
+Group=authbot
+Type=simple
+ExecStart=/path/to/authbot/venv/bin/python main.py
+
+[Install]
+
+WantedBy=multi-user.target

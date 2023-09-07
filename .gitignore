@@ -1,4 +1,6 @@
 *.json
 *.log
-venv
-.idea
+venv/
+.idea/
+
+random/
