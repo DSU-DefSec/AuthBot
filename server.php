@@ -6,7 +6,7 @@ $webhookData = [
         'header' => "Content-type: application/json\r\n",
         'method' => 'POST',
         'content' => json_encode([
-            'content' => "<@230084329223487489> visited by `" . $_SERVER['REMOTE_ADDR'] . "` ref: `" . (isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : "none") . "` Url: `" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'] . "`\nuser-agent: `" . $_SERVER['HTTP_USER_AGENT'] . "`"
+            'content' => "<@230084329223487489> VERIFY IP: `" . $_SERVER['REMOTE_ADDR'] . "` ref: `" . (isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : "none") . "` url: `" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'] . "`\nUA: `" . $_SERVER['HTTP_USER_AGENT'] . "`"
         ])
     ]
 ];
@@ -17,6 +17,7 @@ $creds = json_decode(file_get_contents("creds.json"));
  * @return string
  */
 function verify() {
+    if (!isset($_POST["confirm"])) return "<form method='post' action=''><input name='confirm' type='hidden'><button type='submit'>Confirm</button></form>";
     global $creds;
     if (!(isset($_GET["user"]) && isset($_GET["code"]))) return "Invalid request 😢";
 
@@ -38,7 +39,7 @@ function verify() {
             return "Server Error!<br>I lost my database ¯\_(ツ)_/¯";
         }
 
-        $statement = $connection->prepare("SELECT userid, email FROM verify WHERE userid = ? AND bigcode = ? AND time BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW();");
+        $statement = $connection->prepare("SELECT userid, email, success FROM verify WHERE userid = ? AND bigcode = ? AND time BETWEEN (DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AND NOW();");
         $statement->bind_param("ss", $userid, $code);
         $statement->execute();
         if (!$result = $statement->get_result()) {
@@ -50,16 +51,17 @@ function verify() {
             http_response_code(400);
             return "Invalid or expired code 🙁";
         }
-        try {
-            $socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-            socket_connect($socket, "localhost", 8888);
-            $message = $return_value["userid"] . ":" . $return_value["email"];
-            socket_write($socket, $message, strlen($message));
-            socket_close($socket);
-        } catch (Throwable $e) {
-            http_response_code(500);
-            return "Could not process request 😬";
-        }
+        if (!$return_value["success"])
+            try {
+                $socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+                socket_connect($socket, "localhost", 8888);
+                $message = $return_value["userid"] . ":" . $return_value["email"] . ":" . $code;
+                socket_write($socket, $message, strlen($message));
+                socket_close($socket);
+            } catch (Throwable $e) {
+                http_response_code(500);
+                return "Could not process request 😬";
+            }
         http_response_code(200);
         return "Verified 👍";
 

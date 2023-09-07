@@ -1,7 +1,7 @@
+import datetime
 import json
 import os
 
-import datetime
 import requests
 
 date_string = datetime.date.today().strftime("%m/%d/%Y")
@@ -75,7 +75,7 @@ for day in week_menu:
                 "fields": fields,
                 "author": {"name": f"{datetime.date.today().strftime('%m/%d')}: {time_slot}"},
                 "footer": {"text": "Cereal and Salad Bar are always available"},
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.datetime.utcnow().isoformat(),
             }
         )
 
@@ -84,5 +84,5 @@ WEBHOOK = json.load(open(f"{os.path.dirname(__file__)}/creds.json"))["sodexno_we
 resp = requests.patch(
     f"{WEBHOOK}/messages/{UPDATE_MESSAGE}?wait=true",
     data=json.dumps(message),
-    headers={"Content-Type": "application/json"}
+    headers={"Content-Type": "application/json"},
 )
