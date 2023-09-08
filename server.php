@@ -1,22 +1,10 @@
 <!DOCTYPE html>
 <?php
-if (!isset($_SERVER['HTTP_USER_AGENT']) || $_SERVER['HTTP_USER_AGENT'] === "") die("No");
-$webhookData = [
-    'http' => [
-        'header' => "Content-type: application/json\r\n",
-        'method' => 'POST',
-        'content' => json_encode([
-            'content' => "<@230084329223487489> VERIFY IP: `" . $_SERVER['REMOTE_ADDR'] . "` ref: `" . (isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : "none") . "` url: `" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'] . "`\nUA: `" . $_SERVER['HTTP_USER_AGENT'] . "`"
-        ])
-    ]
-];
 $creds = json_decode(file_get_contents("creds.json"));
-/* Haha yes great coding practices. But Im bad and cant make this line shut up so.... @@@ */
-@file_get_contents($creds->oauth_webhook, false, stream_context_create($webhookData));
 /**
  * @return string
  */
-function verify() {
+function verify(): string {
     global $creds;
     if (!(isset($_GET["state"]) && isset($_GET["code"]))) return "Invalid request 😢";
 
@@ -33,7 +21,7 @@ function verify() {
         try {
             $db = $creds->db;
             @$connection = new mysqli($db->host, $db->user, $db->password, $db->db);
-            if ($connection->connect_errno) throw new Exception("Error: " . $connection->connect_errno . ". " . $connection->connect_error . "");
+            if ($connection->connect_errno) throw new Exception("Error: $connection->connect_errno: $connection->connect_error");
         } catch (Throwable $e) {
             http_response_code(500);
             return "Server Error!<br>I lost my database ¯\_(ツ)_/¯";
@@ -50,7 +38,10 @@ function verify() {
             $socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
             socket_connect($socket, "localhost", 8888);
             socket_write($socket, $state, strlen($state));
+            socket_set_timeout($socket, 1);
+            if (!$response = socket_read($socket, 1)) throw new Exception("Error: Could not read from socket");
             socket_close($socket);
+            if ($response === "x") throw new Exception("Error: Did not verify");
         } catch (Throwable $e) {
             http_response_code(500);
             return "Could not process request 😬";
@@ -62,14 +53,14 @@ function verify() {
         http_response_code(400);
         return "Invalid request 😢";
     }
-
 }
 
 ?>
 <html lang="en">
 <head>
     <title>DSU Verification</title>
-    <style type="text/css">body {
+    <style>
+        body {
             background: #004165;
         }
 
