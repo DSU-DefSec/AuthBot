@@ -3,39 +3,43 @@ import asyncio
 import base64
 import dataclasses
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from json import load
+from random import choice as rand_choice
 from string import ascii_letters, digits
 
 import discord
 import pymysql
 import requests
 from discord.ext import commands
-from random import choice as rand_choice
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class DBC:
     TABLES = [
         """CREATE TABLE IF NOT EXISTS users (
-           id            BIGINT(20)                                                            NOT NULL PRIMARY KEY,
-           discord_tag   VARCHAR(40)                                                           NOT NULL,
-           email         VARCHAR(64)                                                           NULL,
-           name          VARCHAR(64)                                                           NULL,
-           position      ENUM ('non-dsu', 'student', 'professor', 'unknown') DEFAULT 'unknown' NOT NULL,
-           first_seen    TIMESTAMP                                                             NULL,
-           verify_date   TIMESTAMP                                                             NULL,
-           verify_server BIGINT(20)                                                            NULL
+id            BIGINT(20)                                                            NOT NULL PRIMARY KEY,
+discord_tag   VARCHAR(40)                                                           NOT NULL,
+email         VARCHAR(64)                                                           NULL,
+name          VARCHAR(64)                                                           NULL,
+position      ENUM ('non-dsu', 'student', 'professor', 'unknown') DEFAULT 'unknown' NOT NULL,
+first_seen    TIMESTAMP                                                             NULL,
+verify_date   TIMESTAMP                                                             NULL,
+verify_server BIGINT(20)                                                            NULL
        );""",
         """CREATE TABLE IF NOT EXISTS oauth (
-    state              CHAR(16)                              NOT NULL,
-    user_id            BIGINT(20)                            NOT NULL,
-    authorization_code VARCHAR(2048)                         NULL,
-    access_token       VARCHAR(8192)                         NULL,
-    time               TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL ON UPDATE CURRENT_TIMESTAMP(),
-    CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
+state              CHAR(16)                              NOT NULL,
+user_id            BIGINT(20)                            NOT NULL,
+authorization_code VARCHAR(2048)                         NULL,
+access_token       VARCHAR(8192)                         NULL,
+time               TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL ON UPDATE CURRENT_TIMESTAMP(),
+CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
 );""",
     ]
 
@@ -64,7 +68,7 @@ class DBC:
 
     def init_oauth_session(self, user_id: str | int) -> str:
         state = "".join(rand_choice(ascii_letters + digits) for _ in range(16))
-        self._execute("INSERT INTO oauth (state,user_id) VALUE (%s,%s)", (state, user_id))
+        self._execute("INSERT INTO oauth (state, user_id) VALUE (%s,%s)", (state, user_id))
         return state
 
     def add_user(self, user_id: str | int, user_name: str):
@@ -89,10 +93,7 @@ class DBC:
 
     def update_user(self, uid: str | int, *, email: str, name: str, position: str, username: str):
         # Replacing the id kills the fk to verify thus deleting the pending verifications
-        # bot.cursor.execute(
-        #     "REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)",
-        #     (uid, username, email, name, position)
-        # )
+        #     "REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)"
         self._execute(
             "UPDATE users set discord_tag = %s, email = %s, name = %s, position = %s where id = %s;",
             (username, email, name, position, uid),
@@ -120,8 +121,8 @@ class AzureOauth:
             f"&redirect_uri={self.redirect_uri}"
             f"&state={state}"
             # f"&prompt=consent"
-            f"&prompt=none"
-            f"&auth_params=domain_hint=dsu.edu"
+            # f"&prompt=none"
+            f"&auth_params=domain_hint=dsu.edu&domain_hint=dsu.edu"
         )
 
     def get_access_token(self, code: str):
@@ -137,11 +138,11 @@ class AzureOauth:
         )
 
         if auth_response.status_code != 200:
-            print("Could not process oauth")
+            logger.warning("Could not process oauth")
             try:
-                print(json.dumps(auth_response.json(), indent=2))
+                logger.warning(json.dumps(auth_response.json(), indent=2))
             except:
-                print(auth_response.text)
+                logger.warning(auth_response.text)
             raise Exception("Could not process oauth")
 
         return auth_response.json()["access_token"]
@@ -157,7 +158,7 @@ class Config:
     def reload_config(self):
         self._data = json.load(open(self.config_path))
         self.auth_channels = [int(server.get("verify_channel", "0")) for server in self.servers.values()]
-        print("Loaded server config")
+        logger.info("Loaded server config")
 
     def instructor_role(self, guild_id: int | str) -> int:
         return int(self.servers.get(str(guild_id), {}).get("instructor_role", None))
@@ -183,12 +184,13 @@ def get_position(email: str) -> str:
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    logger.info(f"Logged in as {bot.user}")
+    await bot.tree.sync()
     bot.loop.create_task(start_websocket())
     known_users = []
 
     for guild in bot.guilds:
-        print(guild)
+        logger.info(f"Initializing members in {guild}")
         members: AsyncIterator = guild.fetch_members(limit=None)
         try:
             while True:
@@ -198,16 +200,7 @@ async def on_ready():
                     add_user_to_db(member)
         except StopAsyncIteration:
             pass
-    print(f"Users: {len(known_users)}")
-
-
-async def send_oauth_to_user(user: discord.User | discord.Member):
-    if user.id == 230084329223487489:
-        return
-    add_user_to_db(user)
-    session = dbc.init_oauth_session(user.id)
-
-    await user.send(embed=discord.Embed(title="Click here to verify", url=oauth.request(session)))
+    logger.info(f"Total users: {len(known_users)}")
 
 
 def add_user_to_db(user: discord.Member | discord.User):
@@ -237,30 +230,30 @@ async def confirm_roles(member: discord.Member):
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    print(f"+{member} in {member.guild}")
+    logger.info(f"+{member} in {member.guild}")
     add_user_to_db(member)
     await confirm_roles(member)
 
 
 async def start_websocket():
     server = await asyncio.start_server(handle_socket_connection, "127.0.0.1", 8888)
-    print(f"Listening on {server.sockets[0].getsockname()}")
+    logger.info(f"Listening on {server.sockets[0].getsockname()}")
     async with server:
         await server.serve_forever()
 
 
 async def handle_socket_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     addr = writer.get_extra_info("peername")
-    # print(f"Got connection on {addr}")
+    # logger.debug(f"Got connection on {addr}")
     data = await reader.read(100)
     session = data.decode().strip()
-    print(f"Received {session=!r} from {addr}")
+    logger.info(f"Received {session=!r} from {addr}")
     user_id, code = dbc.get_authorization_code(session)
     if code is None:
         try:
             writer.write(b"x")
         except Exception as e:
-            print(e)
+            logger.warning(e)
             pass
     else:
         writer.write(b"good" if (await verify_member(user_id, code)) else b"x")
@@ -274,8 +267,7 @@ async def verify_member(uid: int, code: str) -> bool:
 
     user_info = json.loads(base64.b64decode(access_token.split(".")[1]).decode())
     email = user_info["unique_name"]
-    last_name = user_info["family_name"]
-    first_name = user_info["given_name"]
+    last_name, first_name = user_info["family_name"], user_info["given_name"]
     position = get_position(email)
     name = f"{first_name} {last_name}"
     username = bot.get_user(uid).name
@@ -285,7 +277,7 @@ async def verify_member(uid: int, code: str) -> bool:
 
     with open("verify.log", "a") as log:
         log.write(f"{datetime.now()} {username} ({uid}) => {email}\n")
-    print(f"Verified {username} ({uid}) to {email}")
+    logger.info(f"Verified {username} ({uid}) to {email}")
     for server_id, server in config.servers.items():
         try:
             member = bot.get_guild(int(server_id)).get_member(uid)
@@ -296,6 +288,18 @@ async def verify_member(uid: int, code: str) -> bool:
         except (ValueError, AttributeError):
             pass
     return True
+
+
+@bot.tree.command(name="verify", description="Verify to a DSU account")
+async def verify(interaction: discord.Interaction) -> None:
+    """/verify"""
+    user = interaction.user
+    add_user_to_db(user)
+    session = dbc.init_oauth_session(user.id)
+    await interaction.response.send_message(
+        embed=discord.Embed(title="Click here to verify DSU status", url=oauth.request(session)),
+        ephemeral=True,
+    )
 
 
 @bot.command(name="config")
@@ -329,11 +333,11 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
     await bot.process_commands(message)
-    if message.channel.id in config.auth_channels:
-        async with message.channel.typing():
-            await send_oauth_to_user(message.author)
-            await message.add_reaction("✅")
-            await message.delete(delay=25)
+    # if message.channel.id in config.auth_channels:
+    #     async with message.channel.typing():
+    # await send_oauth_to_user(message.author)
+    # await message.add_reaction("✅")
+    # await message.delete(delay=25)
 
 
 with open("creds.json", "r") as c:
@@ -341,10 +345,9 @@ with open("creds.json", "r") as c:
 oauth = AzureOauth(
     client_id=creds["oauth"]["client_id"],
     secret=creds["oauth"]["client_secret"],
-    scopes=[
-        "openid+User.Read",
-    ],
+    scopes=["openid+User.Read"],
     redirect_uri="https://auth.defsec.club/azure/auth",
 )
+
 dbc = DBC(host=creds["db"]["host"], user=creds["db"]["user"], password=creds["db"]["password"], db=creds["db"]["db"])
 bot.run(creds["token"])
