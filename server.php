@@ -38,7 +38,9 @@ function verify(): string {
             $socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
             socket_connect($socket, "localhost", 8888);
             socket_write($socket, $state, strlen($state));
-            socket_set_timeout($socket, 1);
+            // socket_set_timeout($socket, 1);
+//            socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ["sec" => 1, "usec" => 0]);
+            echo "<" . socket_read($socket, 10) . ">";
             if (!$response = socket_read($socket, 1)) throw new Exception("Error: Could not read from socket");
             socket_close($socket);
             if ($response === "x") throw new Exception("Error: Did not verify");

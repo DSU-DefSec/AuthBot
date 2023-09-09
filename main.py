@@ -17,7 +17,8 @@ from discord.ext import commands
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-logger = logging.getLogger(__name__)
+logging.basicConfig()
+logger = logging.getLogger("authbot")
 logger.setLevel(logging.INFO)
 
 
@@ -61,7 +62,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         for table in self.TABLES:
             self.cursor.execute(table)
 
-    def _execute(self, query, args):
+    def _execute(self, query: str, args: tuple) -> None:
         self.db.ping(reconnect=True)
         self.cursor.execute(query, args)
         self.db.commit()
@@ -71,13 +72,13 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         self._execute("INSERT INTO oauth (state, user_id) VALUE (%s,%s)", (state, user_id))
         return state
 
-    def add_user(self, user_id: str | int, user_name: str):
+    def add_user(self, user_id: str | int, user_name: str) -> None:
         self._execute(
-            "INSERT INTO users (id, discord_tag,first_seen) VALUES (%s, %s, CURRENT_TIMESTAMP()) ON DUPLICATE KEY UPDATE discord_tag = %s;",
+            "INSERT INTO users (id, discord_tag, first_seen) VALUES (%s, %s, CURRENT_TIMESTAMP()) ON DUPLICATE KEY UPDATE discord_tag = %s;",
             (user_id, user_name, user_name),
         )
 
-    def get_user(self, user_id):
+    def get_user(self, user_id: str | int) -> User:
         self._execute("SELECT email,name,position FROM users WHERE id = %s", user_id)
         user_info = self.cursor.fetchone()
         if user_info is None:
@@ -85,13 +86,13 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         return self.User(email=user_info[0], name=user_info[1], position=user_info[2])
 
     def get_authorization_code(self, session: str) -> (int, str):
-        self._execute("SELECT user_id,authorization_code FROM oauth WHERE state = %s;", session)
+        self._execute("SELECT user_id, authorization_code FROM oauth WHERE state = %s;", session)
         row = self.cursor.fetchone()
         if row is None:
             return None, None
         return int(row[0]), row[1]
 
-    def update_user(self, uid: str | int, *, email: str, name: str, position: str, username: str):
+    def update_user(self, uid: str | int, *, email: str, name: str, position: str, username: str) -> None:
         # Replacing the id kills the fk to verify thus deleting the pending verifications
         #     "REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)"
         self._execute(
@@ -99,8 +100,15 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
             (username, email, name, position, uid),
         )
 
-    def update_session(self, code: str, access_token: str):
+    def update_session(self, code: str, access_token: str) -> None:
         self._execute("UPDATE oauth SET access_token = %s WHERE authorization_code = %s;", (access_token, code))
+
+    def get_access_token(self, code: str) -> str:
+        self._execute("SELECT access_token FROM oauth WHERE authorization_code = %s;", code)
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return row[0]
 
 
 class AzureOauth:
@@ -136,16 +144,27 @@ class AzureOauth:
                 "client_secret": self.secret,
             },
         )
+        try:
+            resp_json = auth_response.json()
+        except:
+            logger.warning("Non json auth response")
+            logger.warning(auth_response.text)
+            return None
 
         if auth_response.status_code != 200:
+            # 54005 = Already redeemed
+            if 54005 in resp_json.get("error_codes", []):
+                return dbc.get_access_token(code)
             logger.warning("Could not process oauth")
             try:
-                logger.warning(json.dumps(auth_response.json(), indent=2))
+                logger.warning(json.dumps(resp_json, indent=2))
             except:
                 logger.warning(auth_response.text)
-            raise Exception("Could not process oauth")
+            return None
 
-        return auth_response.json()["access_token"]
+            # raise Exception("Could not process oauth")
+
+        return resp_json["access_token"]
 
 
 class Config:
@@ -210,13 +229,14 @@ def add_user_to_db(user: discord.Member | discord.User):
 async def confirm_roles(member: discord.Member):
     user = dbc.get_user(member.id)
     if not user:
+        logger.critical(f"Tried to verify null user {member} ({member.id})")
         return
     verify_reason = f"Verified to {user.name} ({user.email})"
     if user.name:
         try:
             await member.edit(nick=user.name, reason=verify_reason)
         except discord.errors.Forbidden:
-            pass
+            logger.warning(f"Could not set nick for {member} on {member.guild}")
     try:
         if user.position == "professor":
             await member.add_roles(member.guild.get_role(config.instructor_role(member.guild.id)), reason=verify_reason)
@@ -225,7 +245,7 @@ async def confirm_roles(member: discord.Member):
             await member.add_roles(member.guild.get_role(config.student_role(member.guild.id)), reason=verify_reason)
 
     except discord.errors.Forbidden:
-        pass
+        logger.warning(f"Could not set roles for {member} on {member.guild}")
 
 
 @bot.event
@@ -254,7 +274,6 @@ async def handle_socket_connection(reader: asyncio.StreamReader, writer: asyncio
             writer.write(b"x")
         except Exception as e:
             logger.warning(e)
-            pass
     else:
         writer.write(b"good" if (await verify_member(user_id, code)) else b"x")
     writer.close()
@@ -264,16 +283,16 @@ async def verify_member(uid: int, code: str) -> bool:
     access_token = oauth.get_access_token(code)
     if access_token is None:
         return False
-
-    user_info = json.loads(base64.b64decode(access_token.split(".")[1]).decode())
+    # Not enough padding = :( Extra padding = :)
+    user_info = json.loads(base64.b64decode(access_token.split(".")[1] + "===").decode())
     email = user_info["unique_name"]
     last_name, first_name = user_info["family_name"], user_info["given_name"]
     position = get_position(email)
     name = f"{first_name} {last_name}"
     username = bot.get_user(uid).name
 
-    dbc.update_user(uid, email=email, name=name, position=position, username=username)
     dbc.update_session(code, access_token=access_token)
+    dbc.update_user(uid, email=email, name=name, position=position, username=username)
 
     with open("verify.log", "a") as log:
         log.write(f"{datetime.now()} {username} ({uid}) => {email}\n")
@@ -281,12 +300,17 @@ async def verify_member(uid: int, code: str) -> bool:
     for server_id, server in config.servers.items():
         try:
             member = bot.get_guild(int(server_id)).get_member(uid)
-            await confirm_roles(member)
-            await bot.get_channel(int(server["verify_log"])).send(
-                f"{position.capitalize()} {name} email {email} linked {member.mention}"
-            )
         except (ValueError, AttributeError):
-            pass
+            # User not in server
+            continue
+        await confirm_roles(member)
+        try:
+            if "verify_log" in server:
+                await bot.get_channel(int(server["verify_log"])).send(
+                    f"{position.capitalize()} {name} ({email}) linked {member.mention}"
+                )
+        except (ValueError, AttributeError):
+            logger.warning(f"Could not write to verify log channel {server.get('verify_log','')} in {server_id}")
     return True
 
 
