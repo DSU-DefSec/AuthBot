@@ -126,8 +126,7 @@ email         VARCHAR(64)                                                       
 name          VARCHAR(64)                                                           NULL,
 position      ENUM ('non-dsu', 'student', 'professor', 'unknown') DEFAULT 'unknown' NOT NULL,
 first_seen    TIMESTAMP                                                             NULL,
-verify_date   TIMESTAMP                                                             NULL,
-verify_server BIGINT(20)                                                            NULL
+verify_date   TIMESTAMP                                                             NULL
        );""",
         """CREATE TABLE IF NOT EXISTS oauth (
 state              CHAR(16)                              NOT NULL,
@@ -203,7 +202,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         # Replacing the id kills the fk to verify thus deleting the pending verifications
         #     "REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)"
         await self._execute(
-            "UPDATE users set discord_tag = %s, email = %s, name = %s, position = %s where id = %s;",
+            "UPDATE users set discord_tag = %s, email = %s, name = %s, position = %s, verify_date = CURRENT_TIMESTAMP() where id = %s;",
             (username, email, name, position, uid),
         )
 
