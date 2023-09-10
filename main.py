@@ -6,7 +6,6 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
-from json import load
 from random import choice as rand_choice
 from re import compile as re_compile
 from string import ascii_letters, digits
@@ -20,99 +19,49 @@ logger = logging.getLogger("authbot")
 logger.setLevel(logging.INFO)
 
 
-class AuthBot(discord.Client):
-    def __init__(self, *, intents: discord.Intents, web_port: int = 8080):
-        super().__init__(intents=intents)
-        self.web_port = web_port
-        self.tree = discord.app_commands.CommandTree(self)
-        # noinspection PyTypeChecker
-        self.tree.command(name="verify", description="Verify to a DSU account")(self.command_verify)
-
-    async def on_ready(self):
-        """
-        Fired when the bot had fully loaded.
-        Start webserver thread and get all users
-        """
-        logger.info(f"Logged in as {self.user}")
-
-        server = await self.loop.create_server(lambda: RedirectReceiver(), "127.0.0.1", self.web_port)
-        logger.info(f"Webserver listening on 127.0.0.1:{self.web_port}")
-        self.loop.create_task(start_webserver(server))
-
-        await self.tree.sync()
-
-        known_users = []
-        for guild in self.guilds:
-            logger.info(f"Initializing members in {guild}")
-            members: AsyncIterator = guild.fetch_members(limit=None)
-            try:
-                while True:
-                    member = await anext(members)
-                    if member.id not in known_users:
-                        known_users.append(member.id)
-                        await dbc.add_user(member)
-            except StopAsyncIteration:
-                pass
-        logger.info(f"Total users: {len(known_users)}")
-
-    # noinspection PyMethodMayBeStatic
-    async def on_member_join(self, member: discord.Member) -> None:
-        """
-        Fired when a member joins a server
-        """
-        logger.info(f"+{member} in {member.guild}")
-        await dbc.add_user(member)
-        await confirm_roles(member)
-
-    # noinspection PyMethodMayBeStatic
-    async def command_verify(self, interaction: discord.Interaction) -> None:
-        """/verify"""
-        user = interaction.user
-        await dbc.add_user(user)
-        session = await dbc.init_oauth_session(user.id)
-        # noinspection PyUnresolvedReferences
-        await interaction.response.send_message(
-            embed=discord.Embed(title="Click here to verify DSU status", url=oauth.request(session)),
-            ephemeral=True,
-        )
-
-        # @self.command(name="config")
-        # @commands.has_permissions(administrator=True)
-        # async def config_command(ctx):
-        #     if str(ctx.guild.id) not in config.servers:
-        #         await ctx.send("Not configured for this server")
-        #     else:
-        #         await ctx.send(
-        #             embed=discord.Embed(
-        #                 title="Config for this server",
-        #                 description=f"""
-        # Verify channel: <#{config.servers[str(ctx.guild.id)]["verify_channel"]}>
-        # Verify log: <#{config.servers[str(ctx.guild.id)]["verify_log"]}>
-        # Student Role: <@&{config.servers[str(ctx.guild.id)]["student_role"]}>
-        # Professor Role: <@&{config.servers[str(ctx.guild.id)]["instructor_role"]}>
-        # """,
-        #             )
-        #         )
-        #
-        #
-        # @self.command(name="reloadconfig")
-        # @commands.has_permissions(administrator=True)
-        # async def reload(ctx):
-        #     await ctx.message.delete(delay=2)
-        #     config.reload_config()
-        # @bot.event
-        # async def on_message(message: discord.Message):
-        #     if message.author == bot.user:
-        #         return
-        #     await bot.process_commands(message)
-        #     # if message.channel.id in config.auth_channels:
-        #     #     async with message.channel.typing():
-        #     # await send_oauth_to_user(message.author)
-        #     # await message.add_reaction("✅")
-        #     # await message.delete(delay=25)
+def get_position(email: str) -> str:
+    """Guess user's position with the university based on email address"""
+    if "@trojans.dsu.edu" in email.lower() or "@pluto.dsu.edu" in email.lower():
+        return "student"
+    if "@dsu.edu" in email:
+        return "professor"
+    return "non-dsu"
 
 
-bot = AuthBot(intents=discord.Intents.all(), web_port=1157)
+async def start_webserver(server) -> None:
+    """Start serving the webserver. Infinitely blocking"""
+    async with server:
+        await server.serve_forever()
+
+
+class Config:
+    """Configuration manager"""
+
+    def __init__(self, config_path: str):
+        self.config_path: str = config_path
+        self._data: dict = {}
+        self.auth_channels: list[int] = []
+        self.reload_config()
+
+    def reload_config(self):
+        """Reload the config file from disk"""
+        with open(self.config_path) as f:
+            self._data = json.load(f)
+        self.auth_channels = [int(server.get("verify_channel", "0")) for server in self.servers.values()]
+        logger.info("Loaded server config")
+
+    def instructor_role(self, guild_id: int | str) -> int:
+        """Get the instructor role id for a server"""
+        return int(self.servers.get(str(guild_id), {}).get("instructor_role", None))
+
+    def student_role(self, guild_id: int | str) -> int:
+        """Get the student role id for a server"""
+        return int(self.servers.get(str(guild_id), {}).get("student_role", None))
+
+    @property
+    def servers(self) -> dict:
+        """Get all configured servers"""
+        return self._data["servers"]
 
 
 class DBC:
@@ -202,7 +151,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         # Replacing the id kills the fk to verify thus deleting the pending verifications
         #     "REPLACE INTO discord.users (id, discordTag, email, name, position) VALUES (%s, %s, %s, %s, %s)"
         await self._execute(
-            "UPDATE users set discord_tag = %s, email = %s, name = %s, position = %s, verify_date = CURRENT_TIMESTAMP() where id = %s;",
+            "UPDATE users SET discord_tag = %s, email = %s, name = %s, position = %s, verify_date = CURRENT_TIMESTAMP() where id = %s;",
             (username, email, name, position, uid),
         )
 
@@ -254,7 +203,7 @@ class AzureOauth:
             f"&auth_params=domain_hint=dsu.edu&domain_hint=dsu.edu"
         )
 
-    async def get_access_token(self, code: str):
+    async def get_access_token(self, code: str) -> str | None:
         """Use an authorization code to redeem an access token"""
         auth_response = requests.post(
             f"{self.BASE_URL}token",
@@ -276,7 +225,7 @@ class AzureOauth:
         if auth_response.status_code != 200:
             # 54005 = Already redeemed
             if 54005 in resp_json.get("error_codes", []):
-                return await dbc.get_access_token(code)
+                return None
             logger.warning("Could not process oauth")
             try:
                 logger.warning(json.dumps(resp_json, indent=2))
@@ -288,124 +237,6 @@ class AzureOauth:
         return resp_json["access_token"]
 
 
-class Config:
-    """Configuration manager"""
-
-    def __init__(self, config_path: str):
-        self.config_path: str = config_path
-        self._data: dict = {}
-        self.auth_channels: list[int] = []
-        self.reload_config()
-
-    def reload_config(self):
-        """Reload the config file from disk"""
-        self._data = json.load(open(self.config_path))
-        self.auth_channels = [int(server.get("verify_channel", "0")) for server in self.servers.values()]
-        logger.info("Loaded server config")
-
-    def instructor_role(self, guild_id: int | str) -> int:
-        """Get the instructor role id for a server"""
-        return int(self.servers.get(str(guild_id), {}).get("instructor_role", None))
-
-    def student_role(self, guild_id: int | str) -> int:
-        """Get the student role id for a server"""
-        return int(self.servers.get(str(guild_id), {}).get("student_role", None))
-
-    @property
-    def servers(self) -> dict:
-        """Get all configured servers"""
-        return self._data["servers"]
-
-
-config = Config("config.json")
-
-
-def get_position(email: str) -> str:
-    """Guess user's position with the university based on email address"""
-    if "@trojans.dsu.edu" in email.lower() or "@pluto.dsu.edu" in email.lower():
-        return "student"
-    if "@dsu.edu" in email:
-        return "professor"
-    return "non-dsu"
-
-
-async def confirm_roles(member: discord.Member) -> None:
-    """
-    Check the user's nick and roles and confirm that they are correct.
-    ** Roles are only added
-    """
-    user = await dbc.get_user(member.id)
-    if not user:
-        logger.critical(f"Tried to verify null user {member} ({member.id})")
-        return
-    verify_reason = f"Verified to {user.name} ({user.email})"
-    if user.name:
-        try:
-            await member.edit(nick=user.name, reason=verify_reason)
-        except discord.errors.Forbidden:
-            logger.warning(f"Could not set nick for {member} on {member.guild}")
-    try:
-        if user.position == "professor":
-            await member.add_roles(member.guild.get_role(config.instructor_role(member.guild.id)), reason=verify_reason)
-            await member.add_roles(member.guild.get_role(config.student_role(member.guild.id)), reason=verify_reason)
-        if user.position == "student":
-            await member.add_roles(member.guild.get_role(config.student_role(member.guild.id)), reason=verify_reason)
-
-    except discord.errors.Forbidden:
-        logger.warning(f"Could not set roles for {member} on {member.guild}")
-
-
-async def verify_member(state: str, code: str) -> str:
-    """
-    Verify an oauth response
-    :param state: oauth state code
-    :param code: oauth authorization code
-    :return: Status message for user
-    """
-    user_id = await dbc.get_state_user_id(state)
-    if user_id is None:
-        return "Invalid or expired code 🙁"
-    access_token = await oauth.get_access_token(code)
-    if access_token is None:
-        return "Invalid or expired code 🙁"
-    # Not enough padding = :( Extra padding = :)
-    user_info = json.loads(base64.b64decode(access_token.split(".")[1] + "===").decode())
-    email = user_info["unique_name"]
-    last_name, first_name = user_info["family_name"], user_info["given_name"]
-    position = get_position(email)
-    name = f"{first_name} {last_name}"
-    username = bot.get_user(int(user_id)).name
-
-    await dbc.update_session(state, code=code, access_token=access_token)
-    await dbc.update_user(user_id, email=email, name=name, position=position, username=username)
-
-    with open("verify.log", "a") as log:
-        log.write(f"{datetime.now()} {username} ({user_id}) => {email}\n")
-
-    logger.info(f"Verified {username} ({user_id}) to {email}")
-    for server_id, server in config.servers.items():
-        try:
-            member = bot.get_guild(int(server_id)).get_member(int(user_id))
-        except (ValueError, AttributeError):
-            # User not in server
-            continue
-        await confirm_roles(member)
-        try:
-            if "verify_log" in server:
-                await bot.get_channel(int(server["verify_log"])).send(
-                    f"{position.capitalize()} {name} ({email}) linked {member.mention}"
-                )
-        except (ValueError, AttributeError):
-            logger.warning(f"Could not write to verify log channel {server.get('verify_log','')} in {server_id}")
-    return "Verified 👍"
-
-
-async def start_webserver(server) -> None:
-    """Start serving the webserver. Infinitely blocking"""
-    async with server:
-        await server.serve_forever()
-
-
 class RedirectReceiver(asyncio.Protocol):
     """Very simple webserver to receive oauth"""
 
@@ -414,6 +245,7 @@ class RedirectReceiver(asyncio.Protocol):
 
     # noinspection PyMissingOrEmptyDocstring,PyAttributeOutsideInit
     def connection_made(self, transport) -> None:
+        """Honesty, I have no clue but it doesnt work without this function"""
         self.transport = transport
 
     def data_received(self, data) -> None:
@@ -433,7 +265,7 @@ class RedirectReceiver(asyncio.Protocol):
         state = matches[2]
         logger.info(f"Auth: {state=} {authorization_code[:10]}")
         try:
-            self.send_response(await verify_member(state, authorization_code))
+            self.send_response(await bot.verify_member(state, authorization_code))
         except Exception as e:
             logger.warning(f"Uncaught exception: {e} in verify")
             self.send_response("Invalid request 😢", "500 Woops")
@@ -488,14 +320,196 @@ class RedirectReceiver(asyncio.Protocol):
         self.transport.close()
 
 
+class AuthBot(discord.Client):
+    def __init__(self, *, intents: discord.Intents, web_port: int = 8080, oauth: AzureOauth, dbc: DBC, config: Config):
+        super().__init__(intents=intents)
+        self.web_port = web_port
+        self.oauth = oauth
+        self.dbc = dbc
+        self.config = config
+
+        self.tree = discord.app_commands.CommandTree(self)
+        # noinspection PyTypeChecker
+        self.tree.command(name="verify", description="Verify to a DSU account")(self.command_verify)
+
+    async def on_ready(self):
+        """
+        Fired when the bot had fully loaded.
+        Start webserver thread and get all users
+        """
+        logger.info(f"Logged in as {self.user}")
+
+        server = await self.loop.create_server(lambda: RedirectReceiver(), "127.0.0.1", self.web_port)
+        logger.info(f"Webserver listening on 127.0.0.1:{self.web_port}")
+        self.loop.create_task(start_webserver(server))
+
+        await self.tree.sync()
+
+        # Add all known users to the db to get first contact time
+        known_users = []
+        for guild in self.guilds:
+            logger.info(f"Initializing members in {guild}")
+            members: AsyncIterator = guild.fetch_members(limit=None)
+            try:
+                while True:
+                    member = await anext(members)
+                    if member.id not in known_users:
+                        known_users.append(member.id)
+                        await self.dbc.add_user(member)
+            except StopAsyncIteration:
+                pass
+        logger.info(f"Total users: {len(known_users)}")
+
+    # noinspection PyMethodMayBeStatic
+    async def on_member_join(self, member: discord.Member) -> None:
+        """Fired when a member joins a server"""
+        logger.info(f"+{member} in {member.guild}")
+        await self.dbc.add_user(member)
+        await self.confirm_roles(member)
+
+    # noinspection PyMethodMayBeStatic
+    async def command_verify(self, interaction: discord.Interaction) -> None:
+        """/verify"""
+        user = interaction.user
+        await self.dbc.add_user(user)
+        session = await self.dbc.init_oauth_session(user.id)
+        # noinspection PyUnresolvedReferences
+        await interaction.response.send_message(
+            embed=discord.Embed(title="Click here to verify DSU status", url=oauth.request(session)),
+            ephemeral=True,
+        )
+
+        # @self.command(name="config")
+        # @commands.has_permissions(administrator=True)
+        # async def config_command(ctx):
+        #     if str(ctx.guild.id) not in config.servers:
+        #         await ctx.send("Not configured for this server")
+        #     else:
+        #         await ctx.send(
+        #             embed=discord.Embed(
+        #                 title="Config for this server",
+        #                 description=f"""
+        # Verify channel: <#{config.servers[str(ctx.guild.id)]["verify_channel"]}>
+        # Verify log: <#{config.servers[str(ctx.guild.id)]["verify_log"]}>
+        # Student Role: <@&{config.servers[str(ctx.guild.id)]["student_role"]}>
+        # Professor Role: <@&{config.servers[str(ctx.guild.id)]["instructor_role"]}>
+        # """,
+        #             )
+        #         )
+        #
+        #
+        # @self.command(name="reloadconfig")
+        # @commands.has_permissions(administrator=True)
+        # async def reload(ctx):
+        #     await ctx.message.delete(delay=2)
+        #     config.reload_config()
+        # @bot.event
+        # async def on_message(message: discord.Message):
+        #     if message.author == bot.user:
+        #         return
+        #     await bot.process_commands(message)
+        #     # if message.channel.id in config.auth_channels:
+        #     #     async with message.channel.typing():
+        #     # await send_oauth_to_user(message.author)
+        #     # await message.add_reaction("✅")
+        #     # await message.delete(delay=25)
+
+    async def confirm_roles(self, member: discord.Member) -> None:
+        """
+        Check the user's nick and roles and confirm that they are correct.
+        ** Roles are only added
+        """
+        user = await self.dbc.get_user(member.id)
+        if not user:
+            logger.critical(f"Tried to verify null user {member} ({member.id})")
+            return
+        verify_reason = f"Verified to {user.name} ({user.email})"
+        if user.name:
+            try:
+                await member.edit(nick=user.name, reason=verify_reason)
+            except discord.errors.Forbidden:
+                logger.warning(f"Could not set nick for {member} on {member.guild}")
+        try:
+            if user.position == "professor":
+                await member.add_roles(
+                    member.guild.get_role(self.config.instructor_role(member.guild.id)), reason=verify_reason
+                )
+                await member.add_roles(
+                    member.guild.get_role(self.config.student_role(member.guild.id)), reason=verify_reason
+                )
+            if user.position == "student":
+                await member.add_roles(
+                    member.guild.get_role(self.config.student_role(member.guild.id)), reason=verify_reason
+                )
+
+        except discord.errors.Forbidden:
+            logger.warning(f"Could not set roles for {member} on {member.guild}")
+
+    async def verify_member(self, state: str, code: str) -> str:
+        """
+        Verify an oauth response
+        :param state: oauth state code
+        :param code: oauth authorization code
+        :return: Status message for user
+        """
+        user_id = await self.dbc.get_state_user_id(state)
+        if user_id is None:
+            return "Invalid or expired code 🙁"
+        access_token = await self.oauth.get_access_token(code)
+        if access_token is None:
+            access_token = await self.dbc.get_access_token(code)
+        if access_token is None:
+            return "Invalid or expired code 🙁"
+        # Not enough padding = :( Extra padding = :)
+        user_info = json.loads(base64.b64decode(access_token.split(".")[1] + "===").decode())
+        email = user_info["unique_name"]
+        last_name, first_name = user_info["family_name"], user_info["given_name"]
+        position = get_position(email)
+        name = f"{first_name} {last_name}"
+        username = self.get_user(int(user_id)).name
+
+        await self.dbc.update_session(state, code=code, access_token=access_token)
+        await self.dbc.update_user(user_id, email=email, name=name, position=position, username=username)
+
+        with open("verify.log", "a") as log:
+            log.write(f"{datetime.now()} {username} ({user_id}) => {email}\n")
+
+        logger.info(f"Verified {username} ({user_id}) to {email}")
+        for server_id, server in self.config.servers.items():
+            try:
+                member = self.get_guild(int(server_id)).get_member(int(user_id))
+            except (ValueError, AttributeError):
+                # User not in server
+                continue
+            await self.confirm_roles(member)
+            try:
+                if "verify_log" in server:
+                    await self.get_channel(int(server["verify_log"])).send(
+                        f"{position.capitalize()} {name} ({email}) linked {member.mention}"
+                    )
+            except (ValueError, AttributeError):
+                logger.warning(f"Could not write to verify log channel {server.get('verify_log','')} in {server_id}")
+        return "Verified 👍"
+
+
 with open("creds.json") as c:
-    creds = load(c)
-oauth = AzureOauth(
-    client_id=creds["oauth"]["client_id"],
-    secret=creds["oauth"]["client_secret"],
-    scopes=["openid+User.Read"],
-    redirect_uri="https://auth.defsec.club/azure/auth",
+    creds = json.load(c)
+bot = AuthBot(
+    intents=discord.Intents.all(),
+    web_port=1157,
+    oauth=AzureOauth(
+        client_id=creds["oauth"]["client_id"],
+        secret=creds["oauth"]["client_secret"],
+        scopes=["openid+User.Read"],
+        redirect_uri="https://auth.defsec.club/azure/auth",
+    ),
+    dbc=DBC(
+        host=creds["db"]["host"],
+        user=creds["db"]["user"],
+        password=creds["db"]["password"],
+        db=creds["db"]["db"],
+    ),
+    config=Config("config.json"),
 )
 
-dbc = DBC(host=creds["db"]["host"], user=creds["db"]["user"], password=creds["db"]["password"], db=creds["db"]["db"])
 bot.run(creds["token"])
