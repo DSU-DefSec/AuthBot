@@ -25,6 +25,7 @@ class AuthBot(discord.Client):
         super().__init__(intents=intents)
         self.web_port = web_port
         self.tree = discord.app_commands.CommandTree(self)
+        # noinspection PyTypeChecker
         self.tree.command(name="verify", description="Verify to a DSU account")(self.command_verify)
 
     async def on_ready(self):
@@ -69,6 +70,7 @@ class AuthBot(discord.Client):
         user = interaction.user
         await dbc.add_user(user)
         session = await dbc.init_oauth_session(user.id)
+        # noinspection PyUnresolvedReferences
         await interaction.response.send_message(
             embed=discord.Embed(title="Click here to verify DSU status", url=oauth.request(session)),
             ephemeral=True,
@@ -160,7 +162,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
 
     async def _execute(self, query: str, args: tuple, response: bool = False) -> tuple | None:
         async with self.lock:
-            self.db.ping(reconnect=True)
+            self.db.ping()  # reconnect=True
             self._cursor.execute(query, args)
             self.db.commit()
             if response:
@@ -189,7 +191,9 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         :param user_id: Discord ID of user
         :return: User object
         """
-        user_info = await self._execute("SELECT email,name,position FROM users WHERE id = %s", user_id)
+        user_info = await self._execute(
+            "SELECT email,name,position FROM users WHERE id = %s", (user_id,), response=True
+        )
         if user_info is None:
             return None
         return self.User(email=user_info[0], name=user_info[1], position=user_info[2])
@@ -277,7 +281,8 @@ class AzureOauth:
             logger.warning("Could not process oauth")
             try:
                 logger.warning(json.dumps(resp_json, indent=2))
-            except:
+            except Exception as e:
+                logger.warning(f"Error processing oauth response: {e}")
                 logger.warning(auth_response.text)
             return None
 
@@ -381,7 +386,7 @@ async def verify_member(state: str, code: str) -> str:
     logger.info(f"Verified {username} ({user_id}) to {email}")
     for server_id, server in config.servers.items():
         try:
-            member = bot.get_guild(int(server_id)).get_member(user_id)
+            member = bot.get_guild(int(server_id)).get_member(int(user_id))
         except (ValueError, AttributeError):
             # User not in server
             continue
@@ -405,14 +410,16 @@ async def start_webserver(server) -> None:
 class RedirectReceiver(asyncio.Protocol):
     """Very simple webserver to receive oauth"""
 
+    # noinspection RegExpAnonymousGroup
     REQUEST_LINE_RE = re_compile(r"^GET /.*\?code=([a-zA-Z0-9._-]+)&state=([a-zA-Z0-9]{16}).+ HTTP/\d.\d$")
 
+    # noinspection PyMissingOrEmptyDocstring,PyAttributeOutsideInit
     def connection_made(self, transport) -> None:
         self.transport = transport
 
     def data_received(self, data) -> None:
         """Data received on the socket"""
-        task = asyncio.create_task(self.async_data_received(data))
+        asyncio.create_task(self.async_data_received(data))
 
     async def async_data_received(self, data) -> None:
         """Async data processing so that calls can be made to the bot"""
@@ -477,6 +484,7 @@ class RedirectReceiver(asyncio.Protocol):
         http_response += "\r\n"
         http_response += full_message
 
+        # noinspection PyUnresolvedReferences
         self.transport.write(http_response.encode("UTF-8"))
         self.transport.close()
 
