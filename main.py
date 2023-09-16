@@ -4,7 +4,6 @@ import base64
 import dataclasses
 import json
 import logging
-from collections.abc import AsyncIterator
 from datetime import datetime
 from random import choice as rand_choice
 from re import compile as re_compile
@@ -13,6 +12,7 @@ from string import ascii_letters, digits
 import discord
 import pymysql
 import requests
+from discord import ButtonStyle
 
 logging.basicConfig(filename="run.log")
 logger = logging.getLogger("authbot")
@@ -373,11 +373,24 @@ class AuthBot(discord.Client):
         user = interaction.user
         await self.dbc.add_user(user)
         session = await self.dbc.init_oauth_session(user.id)
-        # noinspection PyUnresolvedReferences
-        await interaction.response.send_message(
-            embed=discord.Embed(title="Click here to verify DSU status", url=oauth.request(session)),
-            ephemeral=True,
-        )
+        oauth_url = self.oauth.request(session)
+        user_obj = await self.dbc.get_user(user.id)
+        logger.info(f"Auth request from: {user} {user_obj if user_obj.email is not None else ''}")
+        if user_obj.email is not None:
+            await self.confirm_roles(interaction.user)
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title=f"You are already verified to {user_obj.name} ({user_obj.email})",
+                    description=f"If you would like to verify again [Click here]({oauth_url})",
+                ),
+                ephemeral=True,
+            )
+        else:
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_message(
+                view=UrlButton(oauth_url),
+                ephemeral=True,
+            )
 
         # @self.command(name="config")
         # @commands.has_permissions(administrator=True)
@@ -419,12 +432,14 @@ class AuthBot(discord.Client):
         Check the user's nick and roles and confirm that they are correct.
         ** Roles are only added
         """
+        if member is None:
+            return
         user = await self.dbc.get_user(member.id)
-        if not user:
+        if user is None:
             logger.critical(f"Tried to verify null user {member} ({member.id})")
             return
         verify_reason = f"Verified to {user.name} ({user.email})"
-        if user.name:
+        if user.name is not None:
             try:
                 await member.edit(nick=user.name, reason=verify_reason)
             except discord.errors.Forbidden:
@@ -485,7 +500,7 @@ class AuthBot(discord.Client):
             try:
                 if "verify_log" in server:
                     await self.get_channel(int(server["verify_log"])).send(
-                        f"{position.capitalize()} {name} ({email}) linked {member.mention}"
+                        f"{position.capitalize()} {name} ({email}) linked {f'external: <@{user_id}>'if member is None else member.mention }"
                     )
             except (ValueError, AttributeError):
                 logger.warning(f"Could not write to verify log channel {server.get('verify_log','')} in {server_id}")
