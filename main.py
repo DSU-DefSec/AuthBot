@@ -349,15 +349,10 @@ class AuthBot(discord.Client):
         known_users = []
         for guild in self.guilds:
             logger.info(f"Initializing members in {guild}")
-            members: AsyncIterator = guild.fetch_members(limit=None)
-            try:
-                while True:
-                    member = await anext(members)
-                    if member.id not in known_users:
-                        known_users.append(member.id)
-                        await self.dbc.add_user(member)
-            except StopAsyncIteration:
-                pass
+            async for member in guild.fetch_members(limit=None):
+                if member.id not in known_users:
+                    known_users.append(member.id)
+                    await self.dbc.add_user(member)
         logger.info(f"Total users: {len(known_users)}")
 
     # noinspection PyMethodMayBeStatic
