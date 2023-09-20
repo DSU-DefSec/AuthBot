@@ -7,9 +7,9 @@ from datetime import datetime
 from re import compile as re_compile
 
 import discord
-from discord import ButtonStyle
 
-from util import AzureOauth, DBC, Config, get_position
+from defsec_api import DefSecApi
+from util import AzureOauth, DBC, Config, get_position, UrlButton, BasicTextInput
 
 logging.basicConfig(filename="run.log")
 logger = logging.getLogger("authbot")
@@ -105,30 +105,229 @@ class RedirectReceiver(asyncio.Protocol):
         self.transport.close()
 
 
-class UrlButton(discord.ui.View):
-    def __init__(self, url: str):
-        super().__init__()
-        self.add_item(
-            discord.ui.Button(
-                style=ButtonStyle.green,
-                label="Click here to verify",
-                emoji=bot.get_emoji(753434796063064158),
-                url=url,
+class HelpForm(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Assistance form")
+        self.what = discord.ui.TextInput(
+            label="How can we help you today?",
+            custom_id="what",
+            max_length=100,
+            min_length=5,
+        )
+        self.add_item(self.what)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.command_failed:
+            return
+        print(interaction)
+        await interaction.response.send_message(content=f"Received!", ephemeral=True)
+        await bot.get_channel(1072935617719189626).send(
+            embed=discord.Embed(
+                title=f"Help request from {interaction.user.mention} ({interaction.user.id})",
+                description=f"{self.what.value}",
             )
         )
 
 
+class DeployButtonView(discord.ui.View):
+    def __init__(self, template_id: str, template_name: str = None):
+        super().__init__()
+        self.add_item(DeployButton(template_id, template_name))
+
+
+class DeployButton(
+    discord.ui.Button
+    # discord.ui.dynamic.DynamicItem[discord.ui.Button],
+    # template=r"deploybutton:(?P<id>[a-zA-Z0-9-]{36})",
+):
+    def __init__(self, template_id: str, template_name: str = None):
+        super().__init__(
+            # discord.ui.Button(
+            label=f"Click for vapp ({template_name})",
+            style=discord.ButtonStyle.blurple,
+            custom_id="deploybutton:"
+            # )
+        )
+        self.template_id = template_id
+
+    # @classmethod
+    # async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+    #     return cls(template_id=match["id"])
+
+    async def callback(self, interaction: discord.Interaction):
+        user = await bot.dbc.get_user(interaction.user.id)
+
+        if user.email is None:
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_message(
+                content="You must be verified to do this! `/verify`", ephemeral=True
+            )
+            return
+
+        if user.ialab_username is None:
+            username = user.email.split("@")[0].lower()
+            if await defsecapi.is_valid_user(username):
+                await bot.dbc.update_ialab_username(interaction.user.id, username)
+                await self.deploy_it(interaction, username)
+                return
+
+        if not await defsecapi.is_valid_user(user.ialab_username):
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_modal(
+                BasicTextInput(
+                    title="IALab username",
+                    prompt="Username (https://ialab.dsu.edu)",
+                    placeholder="Your username for ialab.dsu.edu",
+                    max_length=50,
+                    validator=defsecapi.is_valid_user,
+                    callback=self.update_user,
+                    error_message="No account found for `{}`",
+                )
+            )
+        else:
+            await self.deploy_it(interaction, user.ialab_username)
+
+    async def update_user(self, interaction: discord.Interaction, username: str):
+        await bot.dbc.update_ialab_username(interaction.user.id, username)
+        await self.deploy_it(interaction, username)
+
+    async def deploy_it(self, interaction: discord.Interaction, username: str):
+        e = interaction.message.embeds[0]
+        e.description += "a"
+        await interaction.message.edit(embed=e)
+        # noinspection PyUnresolvedReferences
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        vapp_url = await defsecapi.deploy_lesson(username, template_id=self.template_id)
+        await interaction.followup.send(view=UrlButton(label="Your vapp is ready", url=vapp_url), ephemeral=True)
+
+
 class AuthBot(discord.Client):
-    def __init__(self, *, intents: discord.Intents, web_port: int = 8080, oauth: AzureOauth, dbc: DBC, config: Config):
+    def __init__(self, *, intents: discord.Intents, oauth: AzureOauth, dbc: DBC, config: Config, webserver_port: int):
         super().__init__(intents=intents)
-        self.web_port = web_port
         self.oauth = oauth
         self.dbc = dbc
         self.config = config
+        self.webserver_port = webserver_port
 
         self.tree = discord.app_commands.CommandTree(self)
-        # noinspection PyTypeChecker
-        self.tree.command(name="verify", description="Verify to a DSU account")(self.command_verify)
+
+    @classmethod
+    def create_from_creds(cls, creds: dict):
+        """Create an instance of the bot from a creds dict"""
+        instance = cls(
+            intents=discord.Intents.all(),
+            oauth=AzureOauth(
+                client_id=creds["oauth"]["client_id"],
+                secret=creds["oauth"]["client_secret"],
+                scopes=["openid+User.Read"],
+                redirect_uri="https://auth.defsec.club/azure/auth",
+            ),
+            dbc=DBC(
+                host=creds["db"]["host"],
+                user=creds["db"]["user"],
+                password=creds["db"]["password"],
+                db=creds["db"]["db"],
+            ),
+            config=Config("config.json"),
+            webserver_port=int(creds["webserver_port"]),
+        )
+
+        async def command_deploy_autocompletion(
+            interaction: discord.Interaction, current: str
+        ) -> list[discord.app_commands.Choice[str]]:
+            data = []
+            if len(current) < 2:
+                return data
+            print(current)
+            for vapp in list((await defsecapi.get_lessons(current)).keys()):
+                data.append(discord.app_commands.Choice(name=vapp, value=vapp))
+                if len(data) > 24:
+                    break
+            return data
+
+        @instance.tree.command(name="deploy", description="Make a vapp deploy button")
+        @discord.app_commands.autocomplete(template=command_deploy_autocompletion)
+        async def command_deploy(interaction: discord.Interaction, template: str) -> None:
+            """/deploy"""
+            if (template_id := await defsecapi.get_template_id(template)) is not None:
+                logger.info(f"Deploy button for {template} by {interaction.user}")
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    embed=discord.Embed(title="", description=""), view=DeployButtonView(template_id, template)
+                )
+            else:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(content=f"Unknown template `{template}`!", ephemeral=True)
+
+        @instance.tree.command(name="verify", description="Verify to a DSU account")
+        async def command_verify(interaction: discord.Interaction) -> None:
+            """/verify"""
+            user = interaction.user
+            await instance.dbc.add_user(user)
+            session = await instance.dbc.init_oauth_session(user.id)
+            oauth_url = instance.oauth.request(session)
+            user_obj = await instance.dbc.get_user(user.id)
+            logger.info(f"Auth request from: {user} {user_obj if user_obj.email is not None else ''}")
+            if user_obj.email is not None:
+                await instance.confirm_roles(interaction.user)
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        title=f"You are already verified to {user_obj.name} ({user_obj.email})",
+                        description=f"If you would like to verify again [Click here]({oauth_url})",
+                    ),
+                    ephemeral=True,
+                )
+            else:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    view=UrlButton(
+                        oauth_url, label="Click here to verify", emoji=instance.get_emoji(753434796063064158)
+                    ),
+                    ephemeral=True,
+                )
+
+            # @self.command(name="config")
+            # @commands.has_permissions(administrator=True)
+            # async def config_command(ctx):
+            #     if str(ctx.guild.id) not in config.servers:
+            #         await ctx.send("Not configured for this server")
+            #     else:
+            #         await ctx.send(
+            #             embed=discord.Embed(
+            #                 title="Config for this server",
+            #                 description=f"""
+            # Verify channel: <#{config.servers[str(ctx.guild.id)]["verify_channel"]}>
+            # Verify log: <#{config.servers[str(ctx.guild.id)]["verify_log"]}>
+            # Student Role: <@&{config.servers[str(ctx.guild.id)]["student_role"]}>
+            # Professor Role: <@&{config.servers[str(ctx.guild.id)]["instructor_role"]}>
+            # """,
+            #             )
+            #         )
+            #
+            #
+            # @self.command(name="reloadconfig")
+            # @commands.has_permissions(administrator=True)
+            # async def reload(ctx):
+            #     await ctx.message.delete(delay=2)
+            #     config.reload_config()
+            # @bot.event
+            # async def on_message(message: discord.Message):
+            #     if message.author == bot.user:
+            #         return
+            #     await bot.process_commands(message)
+            #     # if message.channel.id in config.auth_channels:
+            #     #     async with message.channel.typing():
+            #     # await send_oauth_to_user(message.author)
+            #     # await message.add_reaction("✅")
+            #     # await message.delete(delay=25)
+
+        @instance.tree.command(name="help", description="Get help from the officers")
+        async def command_helps(interaction: discord.Interaction) -> None:
+            """/deploy"""
+            await interaction.response.send_modal(HelpForm())
+
+        return instance
 
     async def on_ready(self):
         """
@@ -137,8 +336,8 @@ class AuthBot(discord.Client):
         """
         logger.info(f"Logged in as {self.user}")
 
-        server = await self.loop.create_server(lambda: RedirectReceiver(), "127.0.0.1", self.web_port)
-        logger.info(f"Webserver listening on 127.0.0.1:{self.web_port}")
+        server = await self.loop.create_server(lambda: RedirectReceiver(), "127.0.0.1", self.webserver_port)
+        logger.info(f"Webserver listening on 127.0.0.1:{self.webserver_port}")
         self.loop.create_task(start_webserver(server))
 
         await self.tree.sync()
@@ -153,72 +352,11 @@ class AuthBot(discord.Client):
                     await self.dbc.add_user(member)
         logger.info(f"Total users: {len(known_users)}")
 
-    # noinspection PyMethodMayBeStatic
     async def on_member_join(self, member: discord.Member) -> None:
         """Fired when a member joins a server"""
         logger.info(f"+{member} in {member.guild}")
         await self.dbc.add_user(member)
         await self.confirm_roles(member)
-
-    # noinspection PyMethodMayBeStatic
-    async def command_verify(self, interaction: discord.Interaction) -> None:
-        """/verify"""
-        user = interaction.user
-        await self.dbc.add_user(user)
-        session = await self.dbc.init_oauth_session(user.id)
-        oauth_url = self.oauth.request(session)
-        user_obj = await self.dbc.get_user(user.id)
-        logger.info(f"Auth request from: {user} {user_obj if user_obj.email is not None else ''}")
-        if user_obj.email is not None:
-            await self.confirm_roles(interaction.user)
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title=f"You are already verified to {user_obj.name} ({user_obj.email})",
-                    description=f"If you would like to verify again [Click here]({oauth_url})",
-                ),
-                ephemeral=True,
-            )
-        else:
-            # noinspection PyUnresolvedReferences
-            await interaction.response.send_message(
-                view=UrlButton(oauth_url),
-                ephemeral=True,
-            )
-
-        # @self.command(name="config")
-        # @commands.has_permissions(administrator=True)
-        # async def config_command(ctx):
-        #     if str(ctx.guild.id) not in config.servers:
-        #         await ctx.send("Not configured for this server")
-        #     else:
-        #         await ctx.send(
-        #             embed=discord.Embed(
-        #                 title="Config for this server",
-        #                 description=f"""
-        # Verify channel: <#{config.servers[str(ctx.guild.id)]["verify_channel"]}>
-        # Verify log: <#{config.servers[str(ctx.guild.id)]["verify_log"]}>
-        # Student Role: <@&{config.servers[str(ctx.guild.id)]["student_role"]}>
-        # Professor Role: <@&{config.servers[str(ctx.guild.id)]["instructor_role"]}>
-        # """,
-        #             )
-        #         )
-        #
-        #
-        # @self.command(name="reloadconfig")
-        # @commands.has_permissions(administrator=True)
-        # async def reload(ctx):
-        #     await ctx.message.delete(delay=2)
-        #     config.reload_config()
-        # @bot.event
-        # async def on_message(message: discord.Message):
-        #     if message.author == bot.user:
-        #         return
-        #     await bot.process_commands(message)
-        #     # if message.channel.id in config.auth_channels:
-        #     #     async with message.channel.typing():
-        #     # await send_oauth_to_user(message.author)
-        #     # await message.add_reaction("✅")
-        #     # await message.delete(delay=25)
 
     async def confirm_roles(self, member: discord.Member) -> None:
         """
@@ -308,22 +446,7 @@ class AuthBot(discord.Client):
 
 with open("creds.json") as c:
     creds = json.load(c)
-bot = AuthBot(
-    intents=discord.Intents.all(),
-    web_port=1157,
-    oauth=AzureOauth(
-        client_id=creds["oauth"]["client_id"],
-        secret=creds["oauth"]["client_secret"],
-        scopes=["openid+User.Read"],
-        redirect_uri="https://auth.defsec.club/azure/auth",
-    ),
-    dbc=DBC(
-        host=creds["db"]["host"],
-        user=creds["db"]["user"],
-        password=creds["db"]["password"],
-        db=creds["db"]["db"],
-    ),
-    config=Config("config.json"),
-)
 
+defsecapi = DefSecApi(host=creds["defsec_api"]["host"], api_key=creds["defsec_api"]["key"])
+bot = AuthBot.create_from_creds(creds)
 bot.run(creds["token"])

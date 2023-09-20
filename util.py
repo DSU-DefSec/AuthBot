@@ -11,16 +11,70 @@ import json
 import logging
 from random import choice as rand_choice
 from string import ascii_letters, digits
-from typing import TYPE_CHECKING
+from typing import Callable, Coroutine
 
+import discord
 import pymysql
 import requests
 
-if TYPE_CHECKING:
-    import discord
-
-
 logger = logging.getLogger()
+
+
+class UrlButton(discord.ui.View):
+    def __init__(self, url: str, label: str, emoji: discord.Emoji = None):
+        super().__init__()
+        self.add_item(
+            discord.ui.Button(
+                label=label,
+                emoji=emoji,
+                url=url,
+            )
+        )
+
+
+class BasicTextInput(discord.ui.Modal):
+    def __init__(
+        self,
+        title: str,
+        prompt: str,
+        *,
+        validator: Callable[[str], Coroutine[None, None, bool]],
+        callback: Callable[[discord.Interaction, str], Coroutine[None, None, None]],
+        error_message: str = "Invalid input!",
+        placeholder: str = None,
+        default: str = None,
+        min_length: int = 1,
+        max_length: int = 100,
+    ):
+        super().__init__(title=title)
+        self.callback = callback
+        self.validator = validator
+        self.error_message = error_message
+        self.input = discord.ui.TextInput(
+            label=prompt,
+            style=discord.TextStyle.paragraph if max_length is None or max_length > 100 else discord.TextStyle.short,
+            placeholder=placeholder,
+            default=default,
+            min_length=min_length,
+            max_length=max_length,
+        )
+        self.add_item(self.input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.command_failed:
+            return
+        try:
+            if await self.validator(self.input.value):
+                await self.callback(interaction, self.input.value)
+            else:
+                await interaction.response.send_message(
+                    embed=discord.Embed(colour=discord.Colour.red(), title=self.error_message.format(self.input.value)),
+                    ephemeral=True,
+                )
+        except:
+            await interaction.response.send_message(
+                content="There was an unknown error processing your requesst!", ephemeral=True
+            )
 
 
 def get_position(email: str) -> str:
@@ -80,6 +134,7 @@ discord_tag   VARCHAR(40)                                                       
 email         VARCHAR(64)                                                           NULL,
 name          VARCHAR(64)                                                           NULL,
 position      ENUM ('non-dsu', 'student', 'professor', 'unknown') DEFAULT 'unknown' NOT NULL,
+ialab_user    VARCHAR(64)                                                           NULL,
 first_seen    TIMESTAMP                                                             NULL,
 verify_date   TIMESTAMP                                                             NULL
        );""",
@@ -100,6 +155,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         email: str
         name: str
         position: str
+        ialab_username: str
 
     def __init__(self, *, host: str, user: str, password: str, db: str):
         self.db = pymysql.connect(
@@ -146,11 +202,11 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         :return: User object
         """
         user_info = await self._execute(
-            "SELECT email,name,position FROM users WHERE id = %s", (user_id,), response=True
+            "SELECT email,name,position,ialab_username FROM users WHERE id = %s", (user_id,), response=True
         )
         if user_info is None:
             return None
-        return self.User(email=user_info[0], name=user_info[1], position=user_info[2])
+        return self.User(email=user_info[0], name=user_info[1], position=user_info[2], ialab_username=user_info[3])
 
     async def update_user(self, uid: str | int, *, email: str, name: str, position: str, username: str) -> None:
         """Update a user in the DB"""
@@ -159,6 +215,13 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         await self._execute(
             "UPDATE users SET discord_tag = %s, email = %s, name = %s, position = %s, verify_date = CURRENT_TIMESTAMP() where id = %s;",
             (username, email, name, position, uid),
+        )
+
+    async def update_ialab_username(self, uid: str | int, ialab_username: str):
+        """Set the user's ialab username"""
+        await self._execute(
+            "UPDATE users SET ialab_username = %s where id = %s;",
+            (ialab_username, uid),
         )
 
     async def update_session(self, state: str, code: str, access_token: str) -> None:
