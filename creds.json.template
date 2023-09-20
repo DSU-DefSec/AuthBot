@@ -1,17 +1,18 @@
 {
   "token": "",
-  "email": {
-    "email": "",
-    "password": "",
-    "server": "smtp.gmail.com",
-    "port": 587
-  },
   "db": {
     "host": "localhost",
     "user": "",
     "password": "",
     "db": "discord"
   },
+  "oauth": {
+    "client_id": "",
+    "client_secret": ""
+  },
+  "webserver_port":1157
   "sodexno_webhook": "https://discord.com/api/webhooks/##################/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "covid_webhook": "https://discord.com/api/webhooks/##################/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  "oauth_webhook": "https://discord.com/api/webhooks/##################/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 }
+

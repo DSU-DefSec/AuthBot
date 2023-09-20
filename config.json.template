@@ -4,7 +4,9 @@
       "verify_channel": "012345678901234567",
       "verify_log": "012345678901234567",
       "instructor_role": "012345678901234567",
+      "instructor_role_remove": "012345678901234567",
       "student_role": "012345678901234567"
+      "student_role_remove": "012345678901234567"
     }
   }
 }
