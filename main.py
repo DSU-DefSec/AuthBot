@@ -93,9 +93,9 @@ class RedirectReceiver(asyncio.Protocol):
             + """</h1></div></body></html>"""
         )
         http_response = f"HTTP/1.1 {status_code}\r\n"
-        http_response += f"Server: DefSecAuthBot/2.0 Python/3\r\n"
-        http_response += f"Content-Type: text/html; charset=utf-8\r\n"
-        http_response += f"Root-Password: Password1!\r\n"
+        http_response += "Server: DefSecAuthBot/2.0 Python/3\r\n"
+        http_response += "Content-Type: text/html; charset=utf-8\r\n"
+        http_response += "Root-Password: Password1!\r\n"
         http_response += f"Content-Length: {len(full_message)}\r\n"
         http_response += "\r\n"
         http_response += full_message
@@ -106,6 +106,8 @@ class RedirectReceiver(asyncio.Protocol):
 
 
 class HelpForm(discord.ui.Modal):
+    """Simple help form that goes to admin"""
+
     def __init__(self):
         super().__init__(title="Assistance form")
         self.what = discord.ui.TextInput(
@@ -120,7 +122,7 @@ class HelpForm(discord.ui.Modal):
         if interaction.command_failed:
             return
         print(interaction)
-        await interaction.response.send_message(content=f"Received!", ephemeral=True)
+        await interaction.response.send_message(content="Received!", ephemeral=True)
         await bot.get_channel(1072935617719189626).send(
             embed=discord.Embed(
                 title=f"Help request from {interaction.user.mention} ({interaction.user.id})",
@@ -130,8 +132,10 @@ class HelpForm(discord.ui.Modal):
 
 
 class DeployButtonView(discord.ui.View):
+    """View with deploy button"""
+
     def __init__(self, template_id: str, template_name: str = None):
-        super().__init__()
+        super().__init__(timeout=None)
         self.add_item(DeployButton(template_id, template_name))
 
 
@@ -140,6 +144,8 @@ class DeployButton(
     # discord.ui.dynamic.DynamicItem[discord.ui.Button],
     # template=r"deploybutton:(?P<id>[a-zA-Z0-9-]{36})",
 ):
+    """Button to deploy a vapp"""
+
     def __init__(self, template_id: str, template_name: str = None):
         super().__init__(
             # discord.ui.Button(
@@ -149,12 +155,14 @@ class DeployButton(
             # )
         )
         self.template_id = template_id
+        self._embed_lock = asyncio.Lock()
 
     # @classmethod
     # async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
     #     return cls(template_id=match["id"])
 
     async def callback(self, interaction: discord.Interaction):
+        """Respond to button press"""
         user = await bot.dbc.get_user(interaction.user.id)
 
         if user.email is None:
@@ -188,13 +196,24 @@ class DeployButton(
             await self.deploy_it(interaction, user.ialab_username)
 
     async def update_user(self, interaction: discord.Interaction, username: str):
+        """Set the user's IALab username from modal response"""
         await bot.dbc.update_ialab_username(interaction.user.id, username)
         await self.deploy_it(interaction, username)
 
+    async def update_embed(self, interaction: discord.Interaction):
+        """Add the user's name to the embed"""
+        async with self._embed_lock:
+            message: discord.Message = await interaction.message.fetch()
+            e = message.embeds[0]
+            if e.description is None:
+                e.description = ""
+            if interaction.user.mention not in e.description:
+                e.description += f"\n +  {interaction.user.mention}"
+            await message.edit(embed=e)
+
     async def deploy_it(self, interaction: discord.Interaction, username: str):
-        e = interaction.message.embeds[0]
-        e.description += "a"
-        await interaction.message.edit(embed=e)
+        """Deploy the vapp to the user"""
+        asyncio.create_task(self.update_embed(interaction))
         # noinspection PyUnresolvedReferences
         await interaction.response.defer(ephemeral=True, thinking=True)
         vapp_url = await defsecapi.deploy_lesson(username, template_id=self.template_id)
@@ -253,7 +272,8 @@ class AuthBot(discord.Client):
                 logger.info(f"Deploy button for {template} by {interaction.user}")
                 # noinspection PyUnresolvedReferences
                 await interaction.response.send_message(
-                    embed=discord.Embed(title="", description=""), view=DeployButtonView(template_id, template)
+                    embed=discord.Embed(title="Who wants a vapp?"),
+                    view=DeployButtonView(template_id, template),
                 )
             else:
                 # noinspection PyUnresolvedReferences
@@ -324,7 +344,7 @@ class AuthBot(discord.Client):
 
         @instance.tree.command(name="help", description="Get help from the officers")
         async def command_helps(interaction: discord.Interaction) -> None:
-            """/deploy"""
+            """/help"""
             await interaction.response.send_modal(HelpForm())
 
         return instance

@@ -22,7 +22,7 @@ logger = logging.getLogger()
 
 class UrlButton(discord.ui.View):
     def __init__(self, url: str, label: str, emoji: discord.Emoji = None):
-        super().__init__()
+        super().__init__(timeout=None)
         self.add_item(
             discord.ui.Button(
                 label=label,
@@ -84,6 +84,13 @@ def get_position(email: str) -> str:
     if "@dsu.edu" in email:
         return "professor"
     return "non-dsu"
+
+
+def value_or_none(value: str) -> str | None:
+    if value is not None:
+        if value != "":
+            return value
+    return None
 
 
 class Config:
