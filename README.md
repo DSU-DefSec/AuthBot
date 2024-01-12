@@ -1,3 +1,8 @@
+## Authbot
+Verify and link discord members to O365 via Oauth. Additionally, sets roles based on the rank of the O365 account (student/faculty) and enforces realname. Must be manually overridden by admin to change name.
+
+
+
 Install Requirements
 ```
 apt install python3-pip python3-venv mariadb-server
@@ -22,6 +27,6 @@ creds.json)
 Setup service
 
 ```
-move authbot.service -> /etc/systemd/system/authbot.service
+cp authbot.service /etc/systemd/system/authbot.service
 systemctl start authbot
 ```
