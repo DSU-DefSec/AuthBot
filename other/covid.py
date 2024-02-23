@@ -3,73 +3,73 @@ import os
 from csv import reader as csv_reader
 from datetime import datetime
 
-import pymysql
 import requests
-from bs4 import BeautifulSoup
+
+# from bs4 import BeautifulSoup
 
 # Get DSU covid data
-dsu_data = {}
-try:
-    soup = BeautifulSoup(requests.get("https://dsu.edu/covid-19.html").content, "html.parser")
-    for cells in [table_row.find_all("td") for table_row in soup.find_all("tr")]:
-        if len(cells) != 2: continue
-        key = cells[0].text.strip(" \n")
+# dsu_data = {}
+# try:
+#    soup = BeautifulSoup(requests.get("https://dsu.edu/covid-19.html").content, "html.parser")
+#    for cells in [table_row.find_all("td") for table_row in soup.find_all("tr")]:
+#        if len(cells) != 2: continue
+#        key = cells[0].text.strip(" \n")
 
-        if "CURRENT ACTIVE CASES - EMPLOYEES ONLY" in key.upper():
-            key = "employees"
-        elif "CURRENT ACTIVE CASES - STUDENTS ONLY" in key.upper():
-            key = "students"
-        elif "CURRENT ACTIVE CASES - EMPLOYEES AND STUDENTS" in key.upper():
-            key = "total"
-        elif "CURRENT QUARANTINE/ISOLATION IN CAMPUS FACILITIES - EMPLOYEES AND STUDENTS" in key.upper():
-            key = "quarantine_dsu"
-        elif "CURRENT QUARANTINE/ISOLATION - EMPLOYEES AND STUDENTS (INCLUDING HOME QUARANTINE)" in key.upper():
-            key = "quarantine"
-        dsu_data[key] = cells[1].text
-except Exception as e:
-    print(e)
-    print("Failed to get data")
-    exit()
+#        if "CURRENT ACTIVE CASES - EMPLOYEES ONLY" in key.upper():
+#            key = "employees"
+#        elif "CURRENT ACTIVE CASES - STUDENTS ONLY" in key.upper():
+#            key = "students"
+#        elif "CURRENT ACTIVE CASES - EMPLOYEES AND STUDENTS" in key.upper():
+#            key = "total"
+#        elif "CURRENT QUARANTINE/ISOLATION IN CAMPUS FACILITIES - EMPLOYEES AND STUDENTS" in key.upper():
+#            key = "quarantine_dsu"
+#        elif "CURRENT QUARANTINE/ISOLATION - EMPLOYEES AND STUDENTS (INCLUDING HOME QUARANTINE)" in key.upper():
+#            key = "quarantine"
+#        dsu_data[key] = cells[1].text
+# except Exception as e:
+#    print(e)
+#    print("Failed to get data")
+#    exit()
 # Make sure db exists
-with open(f"{os.path.dirname(__file__)}/creds.json", "r") as c: db_creds = json.load(c)["db"]
-db = pymysql.connect(
-    host=db_creds["host"],
-    user=db_creds["user"],
-    password=db_creds["password"],
-    db=db_creds["db"],
-)
-cursor = db.cursor()
+# with open(f"{os.path.dirname(__file__)}/creds.json", "r") as c: db_creds = json.load(c)["db"]
+# db = pymysql.connect(
+#    host=db_creds["host"],
+#    user=db_creds["user"],
+#    password=db_creds["password"],
+#    db=db_creds["db"],
+# )
+# cursor = db.cursor()
 
 # Confirm data since last push
-cursor.execute("""CREATE TABLE IF NOT EXISTS covid (
-time           TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
-employees      INT                                   NOT NULL,
-students       INT                                   NOT NULL,
-total          INT                                   NOT NULL,
-quarantine_dsu INT                                   NOT NULL,
-quarantine     INT                                   NOT NULL);""")
-cursor.execute("""SELECT employees, students, total, quarantine_dsu, quarantine FROM discord.covid
-ORDER BY time DESC LIMIT 0;""")
-last_row = cursor.fetchone()
-if (
-        last_row is None
-        or last_row[0] != dsu_data["employees"]
-        or last_row[1] != dsu_data["students"]
-        # or last_row[2] != dsu_data["total"]
-        # or last_row[3] != dsu_data["quarantine_dsu"]
-        # or last_row[4] != dsu_data["quarantine"]
-):
-    # Commit new data to db
-    cursor.execute("""INSERT INTO discord.covid (employees, students) VALUES (%s, %s)""", (
-        dsu_data["employees"],
-        dsu_data["students"],
-        # dsu_data["total"],
-        # dsu_data["quarantine_dsu"],
-        # dsu_data["quarantine"]
-    ))
-    db.commit()
-cursor.close()
-db.close()
+# cursor.execute("""CREATE TABLE IF NOT EXISTS covid (
+# time           TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
+# employees      INT                                   NOT NULL,
+# students       INT                                   NOT NULL,
+# total          INT                                   NOT NULL,
+# quarantine_dsu INT                                   NOT NULL,
+# quarantine     INT                                   NOT NULL);""")
+# cursor.execute("""SELECT employees, students, total, quarantine_dsu, quarantine FROM discord.covid
+# ORDER BY time DESC LIMIT 0;""")
+# last_row = cursor.fetchone()
+# if (
+#        last_row is None
+#        or last_row[0] != dsu_data["employees"]
+#        or last_row[1] != dsu_data["students"]
+# or last_row[2] != dsu_data["total"]
+# or last_row[3] != dsu_data["quarantine_dsu"]
+# or last_row[4] != dsu_data["quarantine"]
+# ):
+# Commit new data to db
+#    cursor.execute("""INSERT INTO discord.covid (employees, students) VALUES (%s, %s)""", (
+#        dsu_data["employees"],
+#        dsu_data["students"],
+# dsu_data["total"],
+# dsu_data["quarantine_dsu"],
+# dsu_data["quarantine"]
+#    ))
+#    db.commit()
+# cursor.close()
+# db.close()
 
 # Get World covid data
 try:
@@ -95,8 +95,10 @@ def parse_csv(url: str, form2: bool = False) -> dict:
     csv_data = []
     us_id = -1
     for row in csv_parser:
-        if len(row) == 0: continue
-        if len(csv_data) > 0 and (row[6] if form2 else row[0]) != "": continue
+        if len(row) == 0:
+            continue
+        if len(csv_data) > 0 and (row[6] if form2 else row[0]) != "":
+            continue
         if row[1] == "US":
             us_id = len(csv_data)
         csv_data.append(row)
@@ -111,13 +113,16 @@ def parse_csv(url: str, form2: bool = False) -> dict:
             continue
         daily_total = 0
         if first:
-            for row in csv_data[1:]: daily_total += int(r if (r := row[col]) != "" else 0)
-            daily_us = int(csv_data[us_id][col])
+            for row in csv_data[1:]:
+                daily_total += int(float(r if (r := row[col]) != "" else 0))
+            daily_us = int(float(csv_data[us_id][col]))
             first = False
         else:
             for row in csv_data[1:]:
-                daily_total += int(r if (r := row[col]) != "" else 0) - int(r if (r := row[col - 1]) != "" else 0)
-            daily_us = int(csv_data[us_id][col]) - int(csv_data[us_id][col - 1])
+                daily_total += int(float(r if (r := row[col]) != "" else 0)) - int(
+                    float(r if (r := row[col - 1]) != "" else 0)
+                )
+            daily_us = int(float(csv_data[us_id][col])) - int(float(csv_data[us_id][col - 1]))
 
         world["all"] += daily_total
         us["all"] += daily_us
@@ -151,7 +156,7 @@ if datetime.fromisoformat(resp.json()["pushed_at"][:-1]) > datetime.fromisoforma
     world_data["govex"] = resp.json()["pushed_at"][:-1]
     vax = parse_csv(
         "https://raw.githubusercontent.com/govex/COVID-19/master/data_tables/vaccine_data/global_data/time_series_covid19_vaccine_doses_admin_global.csv",
-        form2=True
+        form2=True,
     )
     world_data["US"]["vax"] = vax["US"]
     world_data["world"]["vax"] = vax["world"]
@@ -169,24 +174,15 @@ old = {
         {
             "name": "Cases",
             "value": "Rolling month\nRolling year\nAll time\n\n**Deaths**\nRolling month\nRolling year\nAll time\n\n**Vaccination Doses**\nRolling month\nRolling year\nAll time",
-            "inline": True
+            "inline": True,
         },
-        {
-            "name": "US",
-            "value": data_template.format(d=world_data["US"], country="US"),
-            "inline": True
-        },
-        {
-            "name": "World",
-            "value": data_template.format(d=world_data["world"], country="World"),
-            "inline": True
-        }
+        {"name": "US", "value": data_template.format(d=world_data["US"], country="US"), "inline": True},
+        {"name": "World", "value": data_template.format(d=world_data["world"], country="World"), "inline": True},
     ],
     "footer": {"text": "Updated"},
     "timestamp": max(
-        datetime.fromisoformat(world_data["govex"]),
-        datetime.fromisoformat(world_data["CSSEGISandData"])
-    ).isoformat()
+        datetime.fromisoformat(world_data["govex"]), datetime.fromisoformat(world_data["CSSEGISandData"])
+    ).isoformat(),
 }
 message = {
     "embeds": [
@@ -209,40 +205,34 @@ Vaccine Doses: {us:^{n1}}{world:^{n2}}
 Rolling Month: {u[vax][month]:>{n1},} {w[vax][month]:>{n2},}
 Rolling Year:  {u[vax][year]:>{n1},} {w[vax][year]:>{n2},}
 All Time:      {u[vax][all]:>{n1},} {w[vax][all]:>{n2},}```""".format(
-                u=world_data["US"],
-                w=world_data["world"],
-                n1=12,
-                n2=14,
-                us="US",
-                world="World"
+                u=world_data["US"], w=world_data["world"], n1=12, n2=14, us="US", world="World"
             ),
             "footer": {"text": "Updated"},
             "timestamp": max(
-                datetime.fromisoformat(world_data["govex"]),
-                datetime.fromisoformat(world_data["CSSEGISandData"])
-            ).isoformat()
+                datetime.fromisoformat(world_data["govex"]), datetime.fromisoformat(world_data["CSSEGISandData"])
+            ).isoformat(),
         },
-        {
-            "title": "DSU Covid Dashboard",
-            "url": "https://dsu.edu/covid-19.html",
-            "color": 43488,
-            "fields": [
-                {
-                    "name": "Total Active Cases",
-                    "value": "Students\nEmployees\n\n**Total Quarantine**\nIn Campus Facilities",
-                    "inline": True
-                },
-                {
-                    "name": int(dsu_data["students"]) + int(dsu_data["employees"]),
-                    "value": "{d[students]}\n{d[employees]}".format(
-                        d=dsu_data
-                    ),
-                    "inline": True
-                }
-            ],
-            "footer": {"text": "Updated"},
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+        #        {
+        #            "title": "DSU Covid Dashboard",
+        #            "url": "https://dsu.edu/covid-19.html",
+        #            "color": 43488,
+        #            "fields": [
+        #                {
+        #                    "name": "Total Active Cases",
+        #                    "value": "Students\nEmployees\n\n**Total Quarantine**\nIn Campus Facilities",
+        #                    "inline": True
+        #                },
+        #                {
+        #                    "name": int(dsu_data["students"]) + int(dsu_data["employees"]),
+        #                    "value": "{d[students]}\n{d[employees]}".format(
+        #                        d=dsu_data
+        #                    ),
+        #                    "inline": True
+        #                }
+        #            ],
+        #            "footer": {"text": "Updated"},
+        #            "timestamp": datetime.utcnow().isoformat(),
+        #        }
     ]
 }
 
@@ -251,5 +241,5 @@ WEBHOOK = json.load(open(f"{os.path.dirname(__file__)}/creds.json"))["covid_webh
 resp = requests.patch(
     f"{WEBHOOK}/messages/{UPDATE_MESSAGE}?wait=true",
     data=json.dumps(message),
-    headers={"Content-Type": "application/json"}
+    headers={"Content-Type": "application/json"},
 )
