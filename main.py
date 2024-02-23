@@ -9,7 +9,7 @@ from re import compile as re_compile
 import discord
 
 from defsec_api import DefSecApi
-from util import AzureOauth, DBC, Config, get_position, UrlButton, BasicTextInput
+from util import AzureOauth, DBC, Config, get_position, UrlButton, BasicTextInput, get_vapp_url_from_id
 
 logging.basicConfig(filename="run.log")
 logger = logging.getLogger("authbot")
@@ -53,42 +53,42 @@ class RedirectReceiver(asyncio.Protocol):
             self.send_response(await bot.verify_member(state, authorization_code))
         except Exception as e:
             logger.warning(f"Uncaught exception: {e} in verify")
-            self.send_response("Invalid request 😢", "500 Woops")
+            self.send_response("Invalid request 😢", "500 Oopsy Woopsy")
 
     def send_response(self, message, status_code="200 OK"):
         """Send an HTML formatted response"""
         full_message = (
             """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <title>DSU Verification</title>
-    <style>
-        body {
-            background: #004165;
-        }
-
-        .center {
-            position: absolute;
-            left: 50%;
-            top: 30%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            color: #ffffff;
-        }
-
-        .center > * {
-            margin: 0;
-        }
-
-        #main {
-            background: #ADAFAF;
-            border-radius: 10px;
-            padding: 15px;
-        }
-    </style>
-</head>
-<body>
-<div class="center" id="main"><h1>"""
+            <html lang="en">
+            <head>
+                <title>DSU Verification</title>
+                <style>
+                    body {
+                        background: #004165;
+                    }
+            
+                    .center {
+                        position: absolute;
+                        left: 50%;
+                        top: 30%;
+                        transform: translate(-50%, -50%);
+                        text-align: center;
+                        color: #ffffff;
+                    }
+            
+                    .center > * {
+                        margin: 0;
+                    }
+            
+                    #main {
+                        background: #ADAFAF;
+                        border-radius: 10px;
+                        padding: 15px;
+                    }
+                </style>
+            </head>
+            <body>
+            <div class="center" id="main"><h1>"""
             + f"{message}"
             + """</h1></div></body></html>"""
         )
@@ -121,7 +121,6 @@ class HelpForm(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         if interaction.command_failed:
             return
-        print(interaction)
         await interaction.response.send_message(content="Received!", ephemeral=True)
         await bot.get_channel(1072935617719189626).send(
             embed=discord.Embed(
@@ -140,19 +139,16 @@ class DeployButtonView(discord.ui.View):
 
 
 class DeployButton(
-    discord.ui.Button
-    # discord.ui.dynamic.DynamicItem[discord.ui.Button],
+    discord.ui.Button  # discord.ui.dynamic.DynamicItem[discord.ui.Button],
     # template=r"deploybutton:(?P<id>[a-zA-Z0-9-]{36})",
 ):
     """Button to deploy a vapp"""
 
     def __init__(self, template_id: str, template_name: str = None):
         super().__init__(
-            # discord.ui.Button(
             label=f"Click for vapp ({template_name})",
             style=discord.ButtonStyle.blurple,
-            custom_id="deploybutton:"
-            # )
+            custom_id="deploybutton:",
         )
         self.template_id = template_id
         self._embed_lock = asyncio.Lock()
@@ -257,17 +253,45 @@ class AuthBot(discord.Client):
             data = []
             if len(current) < 2:
                 return data
-            print(current)
+            for vapp in list((await defsecapi.get_templates(partial=current, catalog=None)).keys()):
+                data.append(discord.app_commands.Choice(name=vapp, value=vapp))
+                if len(data) > 24:
+                    break
+            return data
+
+        async def command_lesson_autocompletion(
+                interaction: discord.Interaction, current: str
+        ) -> list[discord.app_commands.Choice[str]]:
+            data = []
+            if len(current) < 2:
+                return data
             for vapp in list((await defsecapi.get_lessons(current)).keys()):
                 data.append(discord.app_commands.Choice(name=vapp, value=vapp))
                 if len(data) > 24:
                     break
             return data
 
+        async def command_share_autocompletion(
+                interaction: discord.Interaction, current: str
+        ) -> list[discord.app_commands.Choice[str]]:
+            user = await bot.dbc.get_user(interaction.user.id)
+
+            if user.ialab_username is None:
+                return [discord.app_commands.Choice(name="Please /verify first", value="")]
+
+            data = []
+            if len(current) < 2:
+                return data
+            for name, vapp_id in list((await defsecapi.get_vapps_for_owner(current, user.ialab_username)).items()):
+                data.append(discord.app_commands.Choice(name=name, value=name))
+                if len(data) > 64:
+                    break
+            return data
+
         @instance.tree.command(name="deploy", description="Make a vapp deploy button")
         @discord.app_commands.autocomplete(template=command_deploy_autocompletion)
         async def command_deploy(interaction: discord.Interaction, template: str) -> None:
-            """/deploy"""
+            """/deploy <template>"""
             if (template_id := await defsecapi.get_template_id(template)) is not None:
                 logger.info(f"Deploy button for {template} by {interaction.user}")
                 # noinspection PyUnresolvedReferences
@@ -307,45 +331,111 @@ class AuthBot(discord.Client):
                     ephemeral=True,
                 )
 
-            # @self.command(name="config")
-            # @commands.has_permissions(administrator=True)
-            # async def config_command(ctx):
-            #     if str(ctx.guild.id) not in config.servers:
-            #         await ctx.send("Not configured for this server")
-            #     else:
-            #         await ctx.send(
-            #             embed=discord.Embed(
-            #                 title="Config for this server",
-            #                 description=f"""
-            # Verify channel: <#{config.servers[str(ctx.guild.id)]["verify_channel"]}>
-            # Verify log: <#{config.servers[str(ctx.guild.id)]["verify_log"]}>
-            # Student Role: <@&{config.servers[str(ctx.guild.id)]["student_role"]}>
-            # Professor Role: <@&{config.servers[str(ctx.guild.id)]["instructor_role"]}>
-            # """,
-            #             )
-            #         )
-            #
-            #
-            # @self.command(name="reloadconfig")
-            # @commands.has_permissions(administrator=True)
-            # async def reload(ctx):
-            #     await ctx.message.delete(delay=2)
-            #     config.reload_config()
-            # @bot.event
-            # async def on_message(message: discord.Message):
-            #     if message.author == bot.user:
-            #         return
-            #     await bot.process_commands(message)
-            #     # if message.channel.id in config.auth_channels:
-            #     #     async with message.channel.typing():
-            #     # await send_oauth_to_user(message.author)
-            #     # await message.add_reaction("✅")
-            #     # await message.delete(delay=25)
 
         @instance.tree.command(name="help", description="Get help from the officers")
-        async def command_helps(interaction: discord.Interaction) -> None:
+        async def command_help(interaction: discord.Interaction) -> None:
             """/help"""
+            # noinspection PyUnresolvedReferences
             await interaction.response.send_modal(HelpForm())
+
+        @instance.tree.command(name="share", description="Share vapp with group")
+        @discord.app_commands.autocomplete(vapp=command_share_autocompletion)
+        async def command_share(interaction: discord.Interaction, vapp: str, who: discord.Role) -> None:
+            """/share <vapp> <role>"""
+
+            user = await bot.dbc.get_user(interaction.user.id)
+
+            if user.ialab_username is None:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    content="You must be verified to do this! `/verify`", ephemeral=True
+                )
+                return
+
+            print(f"Request from {user.ialab_username} to share {vapp}")
+
+            # vapp_id = None
+            # if vapp.startswith("vapp-") and len(vapp) == 41:
+            #     # This is inefficient
+            #     if vapp in (await defsecapi.get_vapps_for_owner("", user.ialab_username)).values():
+            #         vapp_id = vapp
+            # else:
+            vapp_id = (await defsecapi.get_vapps_for_owner(vapp, user.ialab_username)).get(vapp, None)
+
+            if vapp_id is None:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(content=f"Unknown vapp `{vapp}`!", ephemeral=True)
+                return
+
+            logger.info(f"Sharing {vapp} with {who}")
+            # noinspection PyUnresolvedReferences
+            await interaction.response.defer(ephemeral=True, thinking=True)
+
+            to_share = {member.mention: (await bot.dbc.get_user(member.id)).ialab_username for member in who.members}
+
+            if await defsecapi.share_vapp(vapp_id, [iu for iu in to_share.values() if iu is not None]):
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        title=f"{interaction.user.display_name} shared `{vapp}` with:",
+                        description="\n".join(
+                            f"{k}: {v if v is not None else '`not verified!`'}" for k, v in to_share.items()
+                        ),
+                    ),
+                    view=UrlButton(label=f"{vapp}", url=get_vapp_url_from_id(vapp_id)),
+                    ephemeral=False,
+                )
+            else:
+                # noinspection PyUnresolvedReferences
+                await interaction.followup.send_message(
+                    content=f"Error sharing `{vapp}` with ```{to_share.values()}```!", ephemeral=True
+                )
+
+        @instance.tree.command(name="lesson", description="Deploy a lesson vapp")
+        @discord.app_commands.autocomplete(template=command_lesson_autocompletion)
+        async def command_deploy(interaction: discord.Interaction, template: str) -> None:
+            """/lesson <template>"""
+            if (template_id := (await defsecapi.get_lessons(template)).get(template, None)) is not None:
+                logger.info(f"Deploy button for {template} by {interaction.user}")
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    embed=discord.Embed(title="Click button to deploy lesson"),
+                    view=DeployButtonView(template_id, template),
+                    ephemeral=True,
+                )
+            else:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(content=f"Unknown template `{template}`!", ephemeral=True)
+
+        # @instance.tree.command(name="deploy_team", description="Deploy vapp to a team")
+        # @discord.app_commands.autocomplete(template=command_deploy_autocompletion)
+        # async def command_deploy_team(
+        #     interaction: discord.Interaction,
+        #     template: str,
+        #     team_name: str,
+        #     members: discord.Member,
+        # ) -> None:
+        #     """/deploy_team deploy vapp to a team of users"""
+        #     if (template_id := await defsecapi.get_template_id(template)) is not None:
+        #         logger.info(f"Deploy button for {template} by {interaction.user}")
+        #
+        #         users = [await bot.dbc.get_user(m.id) for m in members]
+        #         if None in users:
+        #             await interaction.response.send_message(
+        #                 embed=discord.Embed(
+        #                     title="No IALab user set for:",
+        #                     description="\n".join(members[i].mention for i, u in enumerate(users) if u is None),
+        #                 ),
+        #                 ephemeral=True,
+        #             )
+        #             return
+        #
+        #         await interaction.response.defer(ephemeral=True, thinking=True)
+        #
+        #         vapp_url = await defsecapi.deploy_team(team_name, users=users, template_id=template_id)
+        #         await interaction.followup.send(view=UrlButton(label="Deployed!", url=vapp_url), ephemeral=True)
+        #     else:
+        #         # noinspection PyUnresolvedReferences
+        #         await interaction.response.send_message(content=f"Unknown template `{template}`!", ephemeral=True)
 
         return instance
 
@@ -457,10 +547,10 @@ class AuthBot(discord.Client):
             try:
                 if "verify_log" in server:
                     await self.get_channel(int(server["verify_log"])).send(
-                        f"{position.capitalize()} {name} ({email}) linked {f'external: <@{user_id}>'if member is None else member.mention }"
+                        f"{position.capitalize()} {name} ({email}) linked {f'external: <@{user_id}>' if member is None else member.mention}"
                     )
             except (ValueError, AttributeError):
-                logger.warning(f"Could not write to verify log channel {server.get('verify_log','')} in {server_id}")
+                logger.warning(f"Could not write to verify log channel {server.get('verify_log', '')} in {server_id}")
         return "Verified 👍"
 
 

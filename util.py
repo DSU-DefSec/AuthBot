@@ -206,7 +206,7 @@ CONSTRAINT user_id FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE
         """
         Get the user object for a verified user
         :param user_id: Discord ID of user
-        :return: User object
+        :return: User object or None if user is invalid
         """
         user_info = await self._execute(
             "SELECT email,name,position,ialab_username FROM users WHERE id = %s", (user_id,), response=True
@@ -311,3 +311,9 @@ class AzureOauth:
             return None
 
         return resp_json["access_token"]
+
+
+def get_vapp_url_from_id(vapp_id: str) -> str:
+    if vapp_id.startswith("vapp-"):
+        vapp_id = vapp_id[5:]
+    return f"https://vcloud.ialab.dsu.edu/tenant/DefSec/vdcs/15a9a5ed-d859-4039-b1e7-55476cfe58ef/vapp/vapp-{vapp_id}/vcd-vapp-vms"
